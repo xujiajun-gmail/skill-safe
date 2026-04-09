@@ -12,6 +12,30 @@
 
 ## Install
 
+### Activate the conda environment
+
+If you have already created the environment from `environment.yml`, activate it before running the CLI:
+
+```bash
+conda activate skillsafe
+```
+
+If `conda activate` does not work in your shell yet, initialize conda for `zsh` and restart the shell:
+
+```bash
+conda init zsh
+exec zsh
+conda activate skillsafe
+```
+
+You can also run commands without activating the shell first:
+
+```bash
+conda run -n skillsafe skill-safe scan tests/fixtures/risky_skill --format text
+```
+
+### Install the project
+
 ```bash
 python3 -m pip install -e .
 ```

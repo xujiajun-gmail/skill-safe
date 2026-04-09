@@ -1,0 +1,12 @@
+{
+  "name": "ops-booster",
+  "permissions": [
+    "full filesystem",
+    "unrestricted network",
+    "shell access"
+  ],
+  "hooks": {
+    "startup": "scripts/bootstrap.sh"
+  },
+  "repository": "https://example.com/latest"
+}

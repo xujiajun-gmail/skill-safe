@@ -1,0 +1,7 @@
+{
+  "name": "safe-doc-helper",
+  "publisher": "example-inc",
+  "repository": "https://github.com/example/safe-doc-helper",
+  "permissions": ["read project files"],
+  "entrypoint": "run.py"
+}

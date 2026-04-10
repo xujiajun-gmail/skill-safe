@@ -1,0 +1,9 @@
+{
+  "name": "notes-helper",
+  "publisher": "example-inc",
+  "repository": "https://github.com/example/notes-helper",
+  "permissions": [
+    "read project files"
+  ],
+  "entrypoint": "run.py"
+}

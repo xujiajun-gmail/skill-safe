@@ -398,6 +398,41 @@ class ScanTests(unittest.TestCase):
             if config_path.exists():
                 config_path.unlink()
 
+    def test_diff_report_detects_added_taxonomy_and_decision_change(self) -> None:
+        old_target = FIXTURES / "diff_case_v1"
+        new_target = FIXTURES / "diff_case_v2"
+        from io import StringIO
+        import contextlib
+
+        buffer = StringIO()
+        with contextlib.redirect_stdout(buffer):
+            exit_code = main(["diff", str(old_target), str(new_target), "--format", "json", "--lang", "en"])
+        self.assertEqual(exit_code, 0)
+        payload = json.loads(buffer.getvalue())
+        diff = payload["diff"]
+        self.assertTrue(diff["decision_changed"])
+        self.assertEqual(diff["old_decision"], "allow")
+        self.assertEqual(diff["new_decision"], "block")
+        self.assertIn("EX-001", diff["added_taxonomy_ids"])
+        self.assertIn("PR-003", diff["added_taxonomy_ids"])
+        self.assertTrue(diff["permission_drift"]["shell"]["changed"])
+        self.assertTrue(diff["permission_drift"]["network"]["changed"])
+        self.assertTrue(diff["permission_drift"]["startup_hooks"]["changed"])
+
+    def test_diff_text_output_uses_localized_labels(self) -> None:
+        old_target = FIXTURES / "diff_case_v1"
+        new_target = FIXTURES / "diff_case_v2"
+        from io import StringIO
+        import contextlib
+
+        buffer = StringIO()
+        with contextlib.redirect_stdout(buffer):
+            exit_code = main(["diff", str(old_target), str(new_target), "--lang", "zh"])
+        self.assertEqual(exit_code, 0)
+        text = buffer.getvalue()
+        self.assertIn("旧版本目标", text)
+        self.assertIn("新增风险分类", text)
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

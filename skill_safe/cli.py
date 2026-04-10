@@ -6,18 +6,19 @@ from pathlib import Path
 
 from skill_safe.admission import build_provenance, build_summary, build_trust_profile, decide_findings
 from skill_safe.config import get_config_value, load_config, merge_taxonomy_overrides
+from skill_safe.diffing import build_diff_report
 from skill_safe.dynamic import run_dynamic_observation
 from skill_safe.ingest import IngestError, ingest_target
 from skill_safe.i18n import detect_language
 from skill_safe.llm_config import resolve_llm_config
-from skill_safe.models import Decision, ScanReport
+from skill_safe.models import ScanReport
 from skill_safe.policy import (
     apply_environment_policy,
     apply_policy_profile,
     apply_taxonomy_overrides,
     supported_policy_profiles,
 )
-from skill_safe.reporting import render_report
+from skill_safe.reporting import render_diff_report, render_report
 from skill_safe.scanners import run_static_analysis
 from skill_safe.scoring import score_findings
 from skill_safe.semantic import run_semantic_review
@@ -29,6 +30,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "scan":
         return _run_scan(args)
+    if args.command == "diff":
+        return _run_diff(args)
     parser.print_help()
     return 1
 
@@ -40,38 +43,74 @@ def _build_parser() -> argparse.ArgumentParser:
 
     scan = subparsers.add_parser("scan", help="Scan a skill target")
     scan.add_argument("target", help="Directory or archive containing the skill")
-    scan.add_argument("--config", help="Path to a skill-safe config file")
-    scan.add_argument("--source-type", choices=["auto", "dir", "archive", "git"], default="auto")
-    scan.add_argument("--format", choices=["text", "json", "sarif"], default="text")
-    scan.add_argument("--output", help="Write the report to this file")
-    scan.add_argument("--policy", help="Reserved for future custom policy support")
-    scan.add_argument("--policy-profile", choices=supported_policy_profiles(), default="default")
-    scan.add_argument("--offline", action="store_true", help="Reserved for future remote enrichment disabling")
-    scan.add_argument("--dynamic", action="store_true", help="Enable dynamic observation mode")
-    scan.add_argument("--lang", choices=["auto", "zh", "en"], default="auto")
-    scan.add_argument("--llm-mode", choices=["off", "local", "remote"], help="Optional LLM mode")
-    scan.add_argument("--llm-provider", help="Optional LLM provider name")
-    scan.add_argument("--llm-base-url", help="Optional LLM base URL")
-    scan.add_argument("--llm-model", help="Optional LLM model name")
-    scan.add_argument("--llm-api-key-env", help="Environment variable name for the LLM API key")
+    _add_common_analysis_args(scan)
+
+    diff = subparsers.add_parser("diff", help="Compare two skill versions")
+    diff.add_argument("old_target", help="Previous directory or archive containing the skill")
+    diff.add_argument("new_target", help="New directory or archive containing the skill")
+    _add_common_analysis_args(diff, formats=("text", "json"))
     return parser
+
+
+def _add_common_analysis_args(parser: argparse.ArgumentParser, formats: tuple[str, ...] = ("text", "json", "sarif")) -> None:
+    parser.add_argument("--config", help="Path to a skill-safe config file")
+    parser.add_argument("--source-type", choices=["auto", "dir", "archive", "git"], default="auto")
+    parser.add_argument("--format", choices=formats, default="text")
+    parser.add_argument("--output", help="Write the report to this file")
+    parser.add_argument("--policy", help="Reserved for future custom policy support")
+    parser.add_argument("--policy-profile", choices=supported_policy_profiles(), default="default")
+    parser.add_argument("--offline", action="store_true", help="Reserved for future remote enrichment disabling")
+    parser.add_argument("--dynamic", action="store_true", help="Enable dynamic observation mode")
+    parser.add_argument("--lang", choices=["auto", "zh", "en"], default="auto")
+    parser.add_argument("--llm-mode", choices=["off", "local", "remote"], help="Optional LLM mode")
+    parser.add_argument("--llm-provider", help="Optional LLM provider name")
+    parser.add_argument("--llm-base-url", help="Optional LLM base URL")
+    parser.add_argument("--llm-model", help="Optional LLM model name")
+    parser.add_argument("--llm-api-key-env", help="Environment variable name for the LLM API key")
 
 
 
 def _run_scan(args: argparse.Namespace) -> int:
     try:
-        config = load_config(args.config, cwd=Path(args.target).resolve() if Path(args.target).exists() else Path.cwd())
-    except (FileNotFoundError, ValueError) as exc:
+        report = _build_scan_report(args.target, args)
+    except (FileNotFoundError, ValueError, IngestError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+    rendered = render_report(report, args.format)
+    if args.output:
+        output_path = Path(args.output)
+        output_path.write_text(rendered, encoding="utf-8")
+    else:
+        sys.stdout.write(rendered)
+    return 0
+
+
+def _run_diff(args: argparse.Namespace) -> int:
     try:
-        source_type = args.source_type
-        if source_type == "auto":
-            source_type = get_config_value(config, "scan", "source_type", default="auto")
-        skill = ingest_target(args.target, source_type)
-    except IngestError as exc:
+        old_report = _build_scan_report(args.old_target, args)
+        new_report = _build_scan_report(args.new_target, args)
+    except (FileNotFoundError, ValueError, IngestError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+    output_language = _resolve_output_language(args, old_report, new_report)
+    old_report.output_language = output_language
+    new_report.output_language = output_language
+    diff_report = build_diff_report(old_report, new_report, output_language)
+    rendered = render_diff_report(diff_report, args.format)
+    if args.output:
+        output_path = Path(args.output)
+        output_path.write_text(rendered, encoding="utf-8")
+    else:
+        sys.stdout.write(rendered)
+    return 0
+
+
+def _build_scan_report(target: str, args: argparse.Namespace) -> ScanReport:
+    config = load_config(args.config, cwd=Path(target).resolve() if Path(target).exists() else Path.cwd())
+    source_type = args.source_type
+    if source_type == "auto":
+        source_type = get_config_value(config, "scan", "source_type", default="auto")
+    skill = ingest_target(target, source_type)
 
     llm_config = resolve_llm_config(args, config)
     gatekeeper_findings = run_static_analysis(skill)
@@ -84,12 +123,8 @@ def _run_scan(args: argparse.Namespace) -> int:
     findings = apply_environment_policy(findings, config)
     findings = apply_taxonomy_overrides(findings, merge_taxonomy_overrides(config))
     findings.sort(key=lambda item: item.confidence, reverse=True)
-    lang_mode = args.lang
-    if lang_mode == "auto":
-        lang_mode = get_config_value(config, "language", "mode", default="auto")
-    output_language = detect_language(skill.natural_language_blob(), lang_mode)
+    output_language = detect_language(skill.natural_language_blob(), _resolve_lang_mode(args, config))
     scores = score_findings(findings)
-    decision = decide_findings(findings)
     artifacts = {
         "manifest_present": skill.manifest is not None,
         "file_count": len(skill.files),
@@ -106,13 +141,13 @@ def _run_scan(args: argparse.Namespace) -> int:
         "release_ref": None,
         "content_hash": _manifest_hash(skill),
     }
-    runtime_trace = run_dynamic_observation(skill, enabled=args.dynamic)
-    report = ScanReport(
+    runtime_trace = run_dynamic_observation(skill, enabled=getattr(args, "dynamic", False))
+    return ScanReport(
         schema_version="1.0",
-        target=args.target,
+        target=target,
         source=skill.source,
         output_language=output_language,
-        decision=decision,
+        decision=decide_findings(findings),
         summary=build_summary(findings),
         scores=scores,
         trust_profile=build_trust_profile(artifacts, findings, scores.supply_chain_trust),
@@ -122,13 +157,21 @@ def _run_scan(args: argparse.Namespace) -> int:
         runtime_trace=runtime_trace,
         artifacts=artifacts,
     )
-    rendered = render_report(report, args.format)
-    if args.output:
-        output_path = Path(args.output)
-        output_path.write_text(rendered, encoding="utf-8")
-    else:
-        sys.stdout.write(rendered)
-    return 0
+
+
+def _resolve_lang_mode(args: argparse.Namespace, config: dict[str, object]) -> str:
+    lang_mode = args.lang
+    if lang_mode == "auto":
+        lang_mode = get_config_value(config, "language", "mode", default="auto")
+    return lang_mode
+
+
+def _resolve_output_language(args: argparse.Namespace, old_report: ScanReport, new_report: ScanReport) -> str:
+    if args.lang in {"zh", "en"}:
+        return args.lang
+    if old_report.output_language == new_report.output_language:
+        return old_report.output_language
+    return "zh"
 
 
 

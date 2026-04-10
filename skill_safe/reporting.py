@@ -18,6 +18,12 @@ def render_report(report: ScanReport, output_format: str) -> str:
     return _to_text(report)
 
 
+def render_diff_report(report: dict[str, Any], output_format: str) -> str:
+    if output_format == "json":
+        return json.dumps(report, indent=2, ensure_ascii=False)
+    return _diff_to_text(report)
+
+
 
 def report_to_dict(report: ScanReport) -> dict[str, Any]:
     language = report.output_language
@@ -175,3 +181,36 @@ def _sarif_level(severity: str) -> str:
         "low": "note",
         "info": "note",
     }[severity]
+
+
+def _diff_to_text(report: dict[str, Any]) -> str:
+    language = report.get("output_language", "zh")
+    diff = report["diff"]
+    lines = [
+        f"{render_message(language, 'diff.old_target')}: {diff['old_target']}",
+        f"{render_message(language, 'diff.new_target')}: {diff['new_target']}",
+        f"{render_message(language, 'diff.old_decision')}: {diff['old_decision']}",
+        f"{render_message(language, 'diff.new_decision')}: {diff['new_decision']}",
+        f"{render_message(language, 'diff.decision_changed')}: {str(diff['decision_changed']).lower()}",
+        f"{render_message(language, 'diff.added_taxonomy_ids')}: {', '.join(diff['added_taxonomy_ids']) or '-'}",
+        f"{render_message(language, 'diff.removed_taxonomy_ids')}: {', '.join(diff['removed_taxonomy_ids']) or '-'}",
+        f"{render_message(language, 'diff.permission_drift')}:",
+    ]
+    for key, value in diff["permission_drift"].items():
+        if value["changed"]:
+            lines.append(f"  - {key}: {_text_value(value['old'])} -> {_text_value(value['new'])}")
+    if all(not value["changed"] for value in diff["permission_drift"].values()):
+        lines.append("  - none")
+    lines.append(f"{render_message(language, 'diff.trust_profile_drift')}:")
+    for key, value in diff["trust_profile_drift"].items():
+        if value["changed"]:
+            lines.append(f"  - {key}: {_text_value(value['old'])} -> {_text_value(value['new'])}")
+    if all(not value["changed"] for value in diff["trust_profile_drift"].values()):
+        lines.append("  - none")
+    return "\n".join(lines).strip() + "\n"
+
+
+def _text_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return str(value).lower()
+    return str(value)

@@ -122,7 +122,7 @@ def _prepare_target(path: Path, source_type: str) -> ExtractedTarget:
             return ExtractedTarget(members[0], temp_dir)
         return ExtractedTarget(root, temp_dir)
     raise IngestError(
-        "Unsupported target. v0.1 supports directories, local git working trees, and archives only."
+        "Unsupported target. v0.2 supports directories, local git working trees, and archives only."
     )
 
 

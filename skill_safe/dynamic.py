@@ -21,6 +21,6 @@ def run_dynamic_observation(skill: SkillIR, enabled: bool) -> dict[str, object]:
     return {
         "mode": "simulation",
         "executed": False,
-        "note": "v0.1 intentionally avoids executing untrusted skills on the host. Use a hardened sandbox runner before enabling live execution.",
+        "note": "v0.2 intentionally avoids executing untrusted skills on the host. Use a hardened sandbox runner before enabling live execution.",
         "candidate_entrypoints": sorted(set(candidate_scripts + skill.entrypoints))[:20],
     }

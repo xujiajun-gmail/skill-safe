@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -8,6 +9,7 @@ from skill_safe.admission import build_provenance, build_summary, build_trust_pr
 from skill_safe.config import get_config_value, load_config, merge_taxonomy_overrides
 from skill_safe.diffing import build_diff_report
 from skill_safe.dynamic import run_dynamic_observation
+from skill_safe.explain import load_report_payload, render_explanation
 from skill_safe.ingest import IngestError, ingest_target
 from skill_safe.i18n import detect_language
 from skill_safe.llm_config import resolve_llm_config
@@ -32,6 +34,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_scan(args)
     if args.command == "diff":
         return _run_diff(args)
+    if args.command == "explain":
+        return _run_explain(args)
     parser.print_help()
     return 1
 
@@ -49,6 +53,12 @@ def _build_parser() -> argparse.ArgumentParser:
     diff.add_argument("old_target", help="Previous directory or archive containing the skill")
     diff.add_argument("new_target", help="New directory or archive containing the skill")
     _add_common_analysis_args(diff, formats=("text", "json"))
+
+    explain = subparsers.add_parser("explain", help="Explain a scan or diff JSON report")
+    explain.add_argument("report", help="Path to a scan/diff JSON report")
+    explain.add_argument("--format", choices=("text", "json"), default="text")
+    explain.add_argument("--output", help="Write the explanation to this file")
+    explain.add_argument("--lang", choices=["auto", "zh", "en"], default="auto")
     return parser
 
 
@@ -97,6 +107,22 @@ def _run_diff(args: argparse.Namespace) -> int:
     new_report.output_language = output_language
     diff_report = build_diff_report(old_report, new_report, output_language)
     rendered = render_diff_report(diff_report, args.format)
+    if args.output:
+        output_path = Path(args.output)
+        output_path.write_text(rendered, encoding="utf-8")
+    else:
+        sys.stdout.write(rendered)
+    return 0
+
+
+def _run_explain(args: argparse.Namespace) -> int:
+    try:
+        payload = load_report_payload(args.report)
+    except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    output_language = _resolve_report_language(args.lang, payload)
+    rendered = render_explanation(payload, output_language, args.format)
     if args.output:
         output_path = Path(args.output)
         output_path.write_text(rendered, encoding="utf-8")
@@ -171,6 +197,15 @@ def _resolve_output_language(args: argparse.Namespace, old_report: ScanReport, n
         return args.lang
     if old_report.output_language == new_report.output_language:
         return old_report.output_language
+    return "zh"
+
+
+def _resolve_report_language(requested: str, payload: dict[str, object]) -> str:
+    if requested in {"zh", "en"}:
+        return requested
+    report_language = payload.get("output_language")
+    if report_language in {"zh", "en"}:
+        return str(report_language)
     return "zh"
 
 

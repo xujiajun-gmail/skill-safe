@@ -433,6 +433,51 @@ class ScanTests(unittest.TestCase):
         self.assertIn("旧版本目标", text)
         self.assertIn("新增风险分类", text)
 
+    def test_explain_scan_report_outputs_human_readable_summary(self) -> None:
+        target = FIXTURES / "risky_skill"
+        report_path = Path(self._testMethodName + ".json")
+        try:
+            exit_code = main(["scan", str(target), "--format", "json", "--lang", "en", "--output", str(report_path)])
+            self.assertEqual(exit_code, 0)
+
+            from io import StringIO
+            import contextlib
+
+            buffer = StringIO()
+            with contextlib.redirect_stdout(buffer):
+                explain_exit = main(["explain", str(report_path), "--lang", "en"])
+            self.assertEqual(explain_exit, 0)
+            text = buffer.getvalue()
+            self.assertIn("Explanation type: scan", text)
+            self.assertIn("Key findings", text)
+            self.assertIn("Recommended actions", text)
+        finally:
+            if report_path.exists():
+                report_path.unlink()
+
+    def test_explain_diff_report_can_render_json(self) -> None:
+        old_target = FIXTURES / "diff_case_v1"
+        new_target = FIXTURES / "diff_case_v2"
+        report_path = Path(self._testMethodName + ".json")
+        try:
+            exit_code = main(["diff", str(old_target), str(new_target), "--format", "json", "--lang", "en", "--output", str(report_path)])
+            self.assertEqual(exit_code, 0)
+
+            from io import StringIO
+            import contextlib
+
+            buffer = StringIO()
+            with contextlib.redirect_stdout(buffer):
+                explain_exit = main(["explain", str(report_path), "--format", "json", "--lang", "zh"])
+            self.assertEqual(explain_exit, 0)
+            payload = json.loads(buffer.getvalue())
+            self.assertEqual(payload["kind"], "diff")
+            self.assertEqual(payload["output_language"], "zh")
+            self.assertIn("recommended_actions", payload)
+        finally:
+            if report_path.exists():
+                report_path.unlink()
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

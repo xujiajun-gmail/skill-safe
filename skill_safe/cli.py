@@ -10,6 +10,7 @@ from skill_safe.config import get_config_value, load_config, merge_taxonomy_over
 from skill_safe.diffing import build_diff_report
 from skill_safe.dynamic import run_dynamic_observation
 from skill_safe.explain import load_report_payload, render_explanation
+from skill_safe.flow import apply_flow_decisions, run_flow_analysis
 from skill_safe.ingest import IngestError, ingest_target
 from skill_safe.i18n import detect_language
 from skill_safe.llm_config import resolve_llm_config
@@ -142,12 +143,15 @@ def _build_scan_report(target: str, args: argparse.Namespace) -> ScanReport:
     gatekeeper_findings = run_static_analysis(skill)
     findings = list(gatekeeper_findings)
     findings.extend(run_semantic_review(skill, gatekeeper_findings=gatekeeper_findings))
+    flow_findings, flows = run_flow_analysis(skill, findings)
+    findings.extend(flow_findings)
     policy_profile = args.policy_profile
     if policy_profile == "default":
         policy_profile = get_config_value(config, "policy", "profile", default="default")
     findings = apply_policy_profile(findings, policy_profile)
     findings = apply_environment_policy(findings, config)
     findings = apply_taxonomy_overrides(findings, merge_taxonomy_overrides(config))
+    flows = apply_flow_decisions(flows, findings)
     findings.sort(key=lambda item: item.confidence, reverse=True)
     output_language = detect_language(skill.natural_language_blob(), _resolve_lang_mode(args, config))
     scores = score_findings(findings)
@@ -179,7 +183,7 @@ def _build_scan_report(target: str, args: argparse.Namespace) -> ScanReport:
         trust_profile=build_trust_profile(artifacts, findings, scores.supply_chain_trust),
         provenance=build_provenance(artifacts, findings),
         findings=findings,
-        flows=[],
+        flows=flows,
         runtime_trace=runtime_trace,
         artifacts=artifacts,
     )

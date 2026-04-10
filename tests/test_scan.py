@@ -43,6 +43,24 @@ class ScanTests(unittest.TestCase):
         self.assertIn(scores.overall, {"high", "critical"})
         self.assertGreaterEqual(scores.exploitability, 65)
 
+    def test_risky_skill_scan_report_includes_chain_flows(self) -> None:
+        target = FIXTURES / "risky_skill"
+        from io import StringIO
+        import contextlib
+
+        buffer = StringIO()
+        with contextlib.redirect_stdout(buffer):
+            exit_code = main(["scan", str(target), "--format", "json", "--lang", "en"])
+        self.assertEqual(exit_code, 0)
+        payload = json.loads(buffer.getvalue())
+        taxonomy_ids = {item["taxonomy_id"] for item in payload["findings"]}
+        self.assertIn("CH-001", taxonomy_ids)
+        self.assertIn("CH-004", taxonomy_ids)
+        flow_ids = {item["id"] for item in payload["flows"]}
+        self.assertIn("flow.ch001.untrusted-string-to-shell", flow_ids)
+        self.assertIn("flow.ch004.secret-to-egress", flow_ids)
+        self.assertTrue(all(item["blocked_by_policy"] for item in payload["flows"]))
+
     def test_sarif_output_can_be_written(self) -> None:
         target = FIXTURES / "risky_skill"
         output = Path(self._testMethodName + ".sarif")
@@ -234,6 +252,34 @@ class ScanTests(unittest.TestCase):
         joined_tags = {tag for finding in alignment_findings for tag in finding.tags}
         self.assertIn("no_network_claim_conflicts_with_network_behavior", joined_tags)
         self.assertIn("no_shell_claim_conflicts_with_shell_behavior", joined_tags)
+
+    def test_flow_context_fixture_hits_ch002(self) -> None:
+        target = FIXTURES / "flow_context_skill"
+        from io import StringIO
+        import contextlib
+
+        buffer = StringIO()
+        with contextlib.redirect_stdout(buffer):
+            exit_code = main(["scan", str(target), "--format", "json", "--lang", "en"])
+        self.assertEqual(exit_code, 0)
+        payload = json.loads(buffer.getvalue())
+        taxonomy_ids = {item["taxonomy_id"] for item in payload["findings"]}
+        self.assertIn("CH-002", taxonomy_ids)
+        self.assertTrue(any(flow["id"] == "flow.ch002.untrusted-string-to-context" for flow in payload["flows"]))
+
+    def test_flow_param_fixture_hits_ch003(self) -> None:
+        target = FIXTURES / "flow_param_skill"
+        from io import StringIO
+        import contextlib
+
+        buffer = StringIO()
+        with contextlib.redirect_stdout(buffer):
+            exit_code = main(["scan", str(target), "--format", "json", "--lang", "en"])
+        self.assertEqual(exit_code, 0)
+        payload = json.loads(buffer.getvalue())
+        taxonomy_ids = {item["taxonomy_id"] for item in payload["findings"]}
+        self.assertIn("CH-003", taxonomy_ids)
+        self.assertTrue(any(flow["id"] == "flow.ch003.untrusted-string-to-parameter" for flow in payload["flows"]))
 
     def test_config_can_relax_localhost_without_relaxing_metadata(self) -> None:
         target = FIXTURES / "network_skill"
@@ -450,6 +496,7 @@ class ScanTests(unittest.TestCase):
             text = buffer.getvalue()
             self.assertIn("Explanation type: scan", text)
             self.assertIn("Key findings", text)
+            self.assertIn("Key flows", text)
             self.assertIn("Recommended actions", text)
         finally:
             if report_path.exists():

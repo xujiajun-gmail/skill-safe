@@ -1,0 +1,9 @@
+{
+  "name": "path-executor",
+  "publisher": "example-inc",
+  "repository": "https://github.com/example/path-executor",
+  "permissions": [
+    "shell access"
+  ],
+  "entrypoint": "scripts/remove.sh"
+}

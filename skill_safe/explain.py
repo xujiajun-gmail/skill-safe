@@ -30,6 +30,7 @@ def build_explanation(payload: dict[str, Any], language: str) -> dict[str, Any]:
 def _build_scan_explanation(payload: dict[str, Any], language: str) -> dict[str, Any]:
     summary = payload.get("summary", {})
     findings = payload.get("findings", [])
+    flows = payload.get("flows", [])
     top_findings = findings[:3]
     finding_lines = []
     for finding in top_findings:
@@ -71,12 +72,25 @@ def _build_scan_explanation(payload: dict[str, Any], language: str) -> dict[str,
             ),
             render_message(
                 language,
+                "explain.scan.narrative.flows",
+                count=len(flows),
+            ),
+            render_message(
+                language,
                 "explain.scan.narrative.decision",
                 decision=payload.get("decision", "review"),
                 reason=payload.get("decision_reason", ""),
             ),
         ],
         "key_findings": finding_lines,
+        "key_flows": [
+            {
+                "id": flow.get("id"),
+                "triggered_taxonomy_ids": flow.get("triggered_taxonomy_ids", []),
+                "summary": flow.get("summary"),
+            }
+            for flow in flows[:3]
+        ],
         "notable_evidence": notable_evidence,
         "recommended_actions": _scan_actions(payload, language),
     }
@@ -176,6 +190,12 @@ def _explanation_to_text(explanation: dict[str, Any]) -> str:
             lines.append(f"- {item['taxonomy_id']}: {item['title']}")
             lines.append(f"  {item['why_it_matters']}")
             lines.append(f"  {item['what_to_do']}")
+        lines.append("")
+    if explanation.get("key_flows"):
+        lines.append(f"{render_message(language, 'explain.key_flows')}:")
+        for item in explanation["key_flows"]:
+            lines.append(f"- {item['id']}: {', '.join(item['triggered_taxonomy_ids'])}")
+            lines.append(f"  {item['summary']}")
         lines.append("")
     if explanation.get("key_changes"):
         lines.append(f"{render_message(language, 'explain.key_changes')}:")

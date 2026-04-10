@@ -77,6 +77,7 @@ def _to_text(report: ScanReport) -> str:
         f"{render_message(language, 'text.decision')}: {report.decision.value}",
         f"{render_message(language, 'decision.' + report.decision.value)}",
         f"{render_message(language, 'text.findings')}: {report.summary['finding_count']}",
+        f"{render_message(language, 'text.flows')}: {len(report.flows)}",
         f"{render_message(language, 'text.scores')}: ",
         f"  malice_likelihood: {report.scores.malice_likelihood}",
         f"  exploitability: {report.scores.exploitability}",
@@ -103,6 +104,13 @@ def _to_text(report: ScanReport) -> str:
             excerpt = f" — {ev.excerpt}" if ev.excerpt else ""
             lines.append(f"    * {location}{excerpt}")
         lines.append(f"  {render_message(language, 'text.remediation')}: {render_message(language, f'{finding.taxonomy_id}.remediation')}")
+        lines.append("")
+    if report.flows:
+        lines.append(f"{render_message(language, 'text.flows')}:")
+        for flow in report.flows:
+            lines.append(
+                f"- {flow['id']} [{', '.join(flow['triggered_taxonomy_ids'])}] -> {flow['sink_type']}: {flow['summary']}"
+            )
         lines.append("")
     if report.runtime_trace:
         lines.append(f"{render_message(language, 'text.sandbox')}: ")

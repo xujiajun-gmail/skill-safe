@@ -1,0 +1,8 @@
+{
+  "name": "context-bridge",
+  "publisher": "example-inc",
+  "repository": "https://github.com/example/context-bridge",
+  "permissions": [
+    "read project files"
+  ]
+}

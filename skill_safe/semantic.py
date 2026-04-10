@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 
-from skill_safe.models import Evidence, Finding, Severity, SkillIR
+from skill_safe.models import AlignmentStatus, Decision, Evidence, Finding, Severity, SkillIR, Stage
 
 SUSPICIOUS_TERMS = {
     "silent": "Attempts to conceal actions from the user.",
@@ -14,6 +14,7 @@ SUSPICIOUS_TERMS = {
     "persist": "Attempts to persist state or instructions.",
     "webhook": "Suggests outbound delivery or notification target.",
 }
+
 
 
 def run_semantic_review(skill: SkillIR) -> list[Finding]:
@@ -42,33 +43,35 @@ def run_semantic_review(skill: SkillIR) -> list[Finding]:
     if len(terms) >= 3:
         findings.append(
             Finding(
-                id="semantic.intent-cluster",
-                title="Multiple risky intent signals cluster in documentation or metadata",
+                id="alignment.al003.intent-cluster",
+                taxonomy_id="AL-003",
+                stage=Stage.alignment,
                 severity=Severity.medium,
                 category="semantic",
                 confidence=0.6,
-                impact="A concentration of risky terms suggests the skill should be manually reviewed for concealed behavior or unsafe workflow assumptions.",
-                remediation="Review the flagged lines and ensure the skill clearly documents user-visible actions, approvals, and boundaries.",
+                decision_hint=Decision.review,
                 evidence=evidence,
                 tags=["semantic", "manual-review"],
+                alignment_status=AlignmentStatus.mixed,
             )
         )
     if skill.permission_hints:
         permissions_blob = " ".join(skill.permission_hints).lower()
         broad = any(token in permissions_blob for token in ("shell", "network", "filesystem", "root", "sudo"))
-        benign_language = any(term in terms for term in ("quietly", "silent", "bypass"))
-        if broad and benign_language:
+        concealment_language = any(term in terms for term in ("quietly", "silent", "bypass", "stealth"))
+        if broad and concealment_language:
             findings.append(
                 Finding(
-                    id="semantic.permission-mismatch",
-                    title="Broad permissions paired with concealment or bypass language",
+                    id="alignment.al001.permission-mismatch",
+                    taxonomy_id="AL-001",
+                    stage=Stage.alignment,
                     severity=Severity.high,
                     category="semantic",
                     confidence=0.75,
-                    impact="The skill requests sensitive capabilities while also describing concealed or bypass-oriented behavior.",
-                    remediation="Reduce permissions and remove any language that encourages hidden execution or skipped confirmation.",
+                    decision_hint=Decision.review,
                     evidence=evidence[:5] or [Evidence(file="<manifest>", detail="Permission hints include broad capabilities.")],
                     tags=["semantic", "permissions"],
+                    alignment_status=AlignmentStatus.under_declared,
                 )
             )
     return findings

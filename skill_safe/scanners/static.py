@@ -1,92 +1,97 @@
 from __future__ import annotations
 
 import re
-from collections import Counter
 from pathlib import Path
 from typing import Iterable
 
-from skill_safe.models import Evidence, Finding, Severity, SkillIR
+from skill_safe.models import Decision, Evidence, Finding, Severity, SkillIR, Stage
 
-SUSPICIOUS_COMMAND_PATTERNS: list[tuple[str, str, Severity, str, str]] = [
+SUSPICIOUS_COMMAND_PATTERNS: list[tuple[str, str, Severity, str, Decision]] = [
     (
         r"\b(curl|wget)\b[^\n]*(\||>)\s*(sh|bash|zsh)",
-        "download-exec",
+        "EX-001",
         Severity.critical,
-        "Download-and-execute chain",
-        "Downloads remote content and pipes it directly into a shell.",
+        "download-exec",
+        Decision.block,
     ),
     (
         r"\bosascript\b|\bpowershell\b|\bcmd\.exe\b|\bsh -c\b|\bbash -c\b",
-        "shell-launch",
+        "EX-002",
         Severity.high,
-        "Shell launch or command interpreter use",
-        "Invokes a command interpreter or scripting shell.",
+        "shell-launch",
+        Decision.block,
     ),
     (
         r"\b(chmod\s+\+x|python3?\s+-c|node\s+-e)\b",
-        "inline-exec",
+        "EX-002",
         Severity.medium,
-        "Inline code execution",
-        "Executes dynamically supplied code or enables an executable payload.",
+        "inline-exec",
+        Decision.review,
     ),
     (
         r"base64\s+(-d|--decode)|eval\(|exec\(|fromCharCode",
-        "obfuscation",
+        "SC-002",
         Severity.high,
-        "Obfuscation or dynamic evaluation",
-        "Uses obfuscation or runtime evaluation that can conceal malicious logic.",
+        "obfuscation",
+        Decision.review,
     ),
 ]
 
-PROMPT_INJECTION_PATTERNS: list[tuple[str, Severity, str]] = [
+PROMPT_INJECTION_PATTERNS: list[tuple[str, str, Severity, Decision]] = [
     (
         r"ignore (all|any|previous|prior) (instructions|prompts)|override (system|safety)",
+        "PI-001",
         Severity.high,
-        "Attempts to override higher-priority instructions.",
+        Decision.review,
     ),
     (
         r"do not tell the user|without asking the user|without confirmation|auto-approve",
+        "PI-001",
         Severity.high,
-        "Attempts to bypass user confirmation or conceal actions.",
+        Decision.review,
     ),
     (
         r"treat .* as trusted|execute any command returned|follow tool output exactly",
+        "PI-002",
         Severity.high,
-        "Promotes unsafe trust of external content or tool output.",
+        Decision.review,
     ),
 ]
 
-PRIVILEGE_PATTERNS: list[tuple[str, Severity, str]] = [
-    (r"full.?filesystem|read.?all.?files|write.?any.?file", Severity.high, "Requests broad filesystem access."),
-    (r"unrestricted.?network|internet access|network access", Severity.medium, "Requests broad network access."),
-    (r"shell access|terminal access|run arbitrary commands", Severity.high, "Requests arbitrary command execution."),
-    (r"admin|sudo|root permissions", Severity.high, "Requests elevated system privileges."),
+PRIVILEGE_PATTERNS: list[tuple[str, Severity, str, Decision]] = [
+    (r"full.?filesystem|read.?all.?files|write.?any.?file", Severity.high, "EX-003", Decision.review),
+    (r"unrestricted.?network|internet access|network access", Severity.medium, "EX-003", Decision.review),
+    (r"shell access|terminal access|run arbitrary commands", Severity.high, "EX-003", Decision.block),
+    (r"admin|sudo|root permissions", Severity.high, "EX-003", Decision.block),
 ]
 
-SECRETS_PATTERNS: list[tuple[str, Severity, str]] = [
-    (r"\.ssh/|id_rsa|known_hosts|authorized_keys", Severity.high, "References SSH credentials."),
-    (r"\.env\b|AWS_SECRET_ACCESS_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY", Severity.medium, "References secret-bearing environment or tokens."),
-    (r"wallet|mnemonic|seed phrase|private key", Severity.high, "References wallet or private-key material."),
+SECRETS_PATTERNS: list[tuple[str, Severity, str, Decision]] = [
+    (r"\.ssh/|id_rsa|known_hosts|authorized_keys", Severity.high, "DA-001", Decision.block),
+    (r"\.env\b|AWS_SECRET_ACCESS_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY", Severity.medium, "DA-001", Decision.review),
+    (r"wallet|mnemonic|seed phrase|private key", Severity.high, "DA-001", Decision.block),
+    (r"MEMORY\.md|SOUL\.md|AGENTS\.md", Severity.high, "DA-003", Decision.block),
 ]
 
-PERSISTENCE_PATTERNS: list[tuple[str, Severity, str]] = [
-    (r"\.bashrc|\.zshrc|\.profile|LaunchAgents|crontab|systemd", Severity.high, "Touches persistence-related host configuration."),
-    (r"memory\.|persist|cache instructions|store for future sessions", Severity.medium, "Attempts to persist instructions or state."),
+PERSISTENCE_PATTERNS: list[tuple[str, Severity, str, Decision]] = [
+    (r"\.bashrc|\.zshrc|\.profile|LaunchAgents|crontab|systemd", Severity.high, "SC-003", Decision.block),
+    (r"memory\.|persist|cache instructions|store for future sessions", Severity.medium, "MP-001", Decision.review),
 ]
 
-NETWORK_PATTERNS: list[tuple[str, Severity, str, str]] = [
-    (r"https?://(localhost|127\.0\.0\.1|0\.0\.0\.0)", Severity.high, "localhost-access", "Targets localhost services."),
-    (r"https?://(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)", Severity.high, "internal-network", "Targets private-network services."),
-    (r"169\.254\.169\.254|metadata\.google\.internal", Severity.critical, "cloud-metadata", "Targets cloud metadata services."),
-    (r"https?://[^\s\"']+", Severity.medium, "external-network", "Contains an external network endpoint."),
+NETWORK_PATTERNS: list[tuple[str, Severity, str, str, Decision]] = [
+    (r"https?://(localhost|127\.0\.0\.1|0\.0\.0\.0)", Severity.high, "PR-002", "localhost-access", Decision.block),
+    (r"https?://(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)", Severity.high, "PR-002", "internal-network", Decision.block),
+    (r"169\.254\.169\.254|metadata\.google\.internal", Severity.critical, "PR-002", "cloud-metadata", Decision.block),
+    (r"https?://[^\s\"']+", Severity.medium, "DA-001", "external-network", Decision.review),
 ]
 
-EXFIL_PATTERNS: list[tuple[str, Severity, str]] = [
-    (r"(upload|exfiltrat|send to|post to|webhook|discord\.com/api/webhooks)", Severity.high, "Contains explicit data exfiltration language or upload targets."),
-    (r"requests\.post|fetch\(|axios\.post|curl\s+-[dF]", Severity.medium, "Contains outbound POST/upload behavior."),
+EXFIL_PATTERNS: list[tuple[str, Severity, str, Decision]] = [
+    (r"(upload|exfiltrat|send to|post to|webhook|discord\.com/api/webhooks)", Severity.high, "DA-001", Decision.block),
+    (r"requests\.post|fetch\(|axios\.post|curl\s+-[dF]", Severity.medium, "DA-001", Decision.review),
 ]
 
 HOOK_FILENAMES = ("hook", "startup", "bootstrap", "install", "postinstall", "preinstall")
+UNICODE_HIDDEN_PATTERN = r"[\u200b\u200c\u200d\ufeff]"
+
 
 
 def run_static_analysis(skill: SkillIR) -> list[Finding]:
@@ -106,84 +111,98 @@ def _scan_text_patterns(skill: SkillIR) -> list[Finding]:
         if file.is_binary or not file.text:
             continue
         lower_path = file.path.lower()
-        for pattern, rule_id, severity, title, impact in SUSPICIOUS_COMMAND_PATTERNS:
+        if _find_matches(file.path, file.text, UNICODE_HIDDEN_PATTERN):
+            findings.append(
+                Finding(
+                    id=f"gatekeeper.sc002.unicode-hidden::{file.path}",
+                    taxonomy_id="SC-002",
+                    stage=Stage.gatekeeper,
+                    severity=Severity.medium,
+                    category="supply_chain",
+                    confidence=0.75,
+                    decision_hint=Decision.review,
+                    evidence=_find_matches(file.path, file.text, UNICODE_HIDDEN_PATTERN),
+                    tags=["unicode", "hidden-text"],
+                )
+            )
+        for pattern, taxonomy_id, severity, suffix, decision in SUSPICIOUS_COMMAND_PATTERNS:
             evidences = _find_matches(file.path, file.text, pattern)
             if evidences:
                 findings.append(
                     Finding(
-                        id=f"static.{rule_id}",
-                        title=title,
+                        id=f"gatekeeper.{taxonomy_id.lower()}.{suffix}::{file.path}",
+                        taxonomy_id=taxonomy_id,
+                        stage=Stage.gatekeeper,
                         severity=severity,
-                        category="execution",
+                        category="execution" if taxonomy_id.startswith("EX") else "supply_chain",
                         confidence=0.9,
-                        impact=impact,
-                        remediation="Remove or isolate the execution chain, and require explicit allowlisted commands.",
+                        decision_hint=decision,
                         evidence=evidences,
-                        tags=["command", "execution"],
+                        tags=[suffix],
                     )
                 )
-        for pattern, severity, impact in PROMPT_INJECTION_PATTERNS:
+        for pattern, taxonomy_id, severity, decision in PROMPT_INJECTION_PATTERNS:
             evidences = _find_matches(file.path, file.text, pattern)
             if evidences:
                 findings.append(
                     Finding(
-                        id="static.prompt-injection",
-                        title="Prompt injection or policy-bypass language",
+                        id=f"gatekeeper.{taxonomy_id.lower()}.prompt::{file.path}",
+                        taxonomy_id=taxonomy_id,
+                        stage=Stage.gatekeeper,
                         severity=severity,
                         category="prompt_safety",
                         confidence=0.85,
-                        impact=impact,
-                        remediation="Remove instruction-override language and ensure untrusted content cannot change policy.",
+                        decision_hint=decision,
                         evidence=evidences,
-                        tags=["prompt-injection", "policy-bypass"],
+                        tags=["prompt", "policy-bypass"],
                     )
                 )
-        for pattern, severity, impact in SECRETS_PATTERNS:
+        for pattern, severity, taxonomy_id, decision in SECRETS_PATTERNS:
             evidences = _find_matches(file.path, file.text, pattern)
             if evidences:
                 findings.append(
                     Finding(
-                        id="static.secrets-access",
-                        title="Sensitive credential or wallet access pattern",
+                        id=f"gatekeeper.{taxonomy_id.lower()}.data::{file.path}",
+                        taxonomy_id=taxonomy_id,
+                        stage=Stage.gatekeeper,
                         severity=severity,
-                        category="secrets",
+                        category="secrets" if taxonomy_id == "DA-001" else "memory",
                         confidence=0.8,
-                        impact=impact,
-                        remediation="Restrict access to sensitive paths and document why any secret material is needed.",
+                        decision_hint=decision,
                         evidence=evidences,
-                        tags=["secrets", "credentials"],
+                        tags=["sensitive-data"],
                     )
                 )
-        for pattern, severity, impact in PERSISTENCE_PATTERNS:
+        for pattern, severity, taxonomy_id, decision in PERSISTENCE_PATTERNS:
             evidences = _find_matches(file.path, file.text, pattern)
             if evidences:
                 findings.append(
                     Finding(
-                        id="static.persistence",
-                        title="Persistence or memory-poisoning pattern",
+                        id=f"gatekeeper.{taxonomy_id.lower()}.persistence::{file.path}",
+                        taxonomy_id=taxonomy_id,
+                        stage=Stage.gatekeeper,
                         severity=severity,
                         category="persistence",
                         confidence=0.8,
-                        impact=impact,
-                        remediation="Avoid writing to host persistence locations or carrying hidden instructions across sessions.",
+                        decision_hint=decision,
                         evidence=evidences,
-                        tags=["persistence", "memory"],
+                        tags=["persistence"],
                     )
                 )
-        for pattern, severity, impact in EXFIL_PATTERNS:
+        for pattern, severity, taxonomy_id, decision in EXFIL_PATTERNS:
             evidences = _find_matches(file.path, file.text, pattern)
             if evidences:
                 findings.append(
                     Finding(
-                        id="static.exfiltration",
-                        title="Potential exfiltration or outbound upload behavior",
+                        id=f"gatekeeper.{taxonomy_id.lower()}.exfil::{file.path}",
+                        taxonomy_id=taxonomy_id,
+                        stage=Stage.gatekeeper,
                         severity=severity,
                         category="exfiltration",
                         confidence=0.8,
-                        impact=impact,
-                        remediation="Require allowlisted egress destinations and explicit approval for outbound uploads.",
+                        decision_hint=decision,
                         evidence=evidences,
-                        tags=["network", "egress"],
+                        tags=["egress"],
                     )
                 )
         if lower_path.endswith((".md", ".txt")) and "```" in file.text:
@@ -191,13 +210,13 @@ def _scan_text_patterns(skill: SkillIR) -> list[Finding]:
             if evidences:
                 findings.append(
                     Finding(
-                        id="static.doc-exec-snippet",
-                        title="Executable documentation snippet",
+                        id=f"gatekeeper.sc001.doc-exec::{file.path}",
+                        taxonomy_id="SC-001",
+                        stage=Stage.gatekeeper,
                         severity=Severity.medium,
                         category="documentation",
                         confidence=0.65,
-                        impact="Documentation contains executable shell snippets that may be used as an installation vector.",
-                        remediation="Review docs for social-engineering or unsafe install guidance.",
+                        decision_hint=Decision.review,
                         evidence=evidences,
                         tags=["docs", "install"],
                     )
@@ -213,30 +232,30 @@ def _scan_permissions(skill: SkillIR) -> list[Finding]:
         if skill.manifest is None:
             findings.append(
                 Finding(
-                    id="meta.no-manifest",
-                    title="No manifest or structured metadata found",
+                    id="gatekeeper.sc004.no-manifest",
+                    taxonomy_id="SC-004",
+                    stage=Stage.gatekeeper,
                     severity=Severity.medium,
                     category="supply_chain",
                     confidence=0.75,
-                    impact="The skill has no obvious machine-readable manifest, which makes permission review and provenance weaker.",
-                    remediation="Add a manifest with explicit permissions, entrypoints, and provenance metadata.",
+                    decision_hint=Decision.review,
                     evidence=[Evidence(file="<root>", detail="No supported manifest candidate was found.")],
                     tags=["manifest", "provenance"],
                 )
             )
         return findings
-    for pattern, severity, impact in PRIVILEGE_PATTERNS:
+    for pattern, severity, taxonomy_id, decision in PRIVILEGE_PATTERNS:
         evidences = _find_matches("<manifest>", joined, pattern)
         if evidences:
             findings.append(
                 Finding(
-                    id="meta.privilege-excess",
-                    title="Broad or risky permissions requested",
+                    id=f"gatekeeper.{taxonomy_id.lower()}.permissions::{pattern}",
+                    taxonomy_id=taxonomy_id,
+                    stage=Stage.gatekeeper,
                     severity=severity,
                     category="permissions",
                     confidence=0.8,
-                    impact=impact,
-                    remediation="Reduce permissions to the minimum task-specific set and separate read-only from mutating capabilities.",
+                    decision_hint=decision,
                     evidence=evidences,
                     tags=["permissions", "least-privilege"],
                 )
@@ -254,13 +273,13 @@ def _scan_manifest(skill: SkillIR) -> list[Finding]:
         if not name:
             findings.append(
                 Finding(
-                    id="meta.missing-name",
-                    title="Manifest missing skill name",
+                    id="gatekeeper.sc004.missing-name",
+                    taxonomy_id="SC-004",
+                    stage=Stage.gatekeeper,
                     severity=Severity.low,
                     category="supply_chain",
                     confidence=0.9,
-                    impact="Missing identity metadata makes provenance and marketplace review harder.",
-                    remediation="Add a stable name and publisher identity to the manifest.",
+                    decision_hint=Decision.review,
                     evidence=[Evidence(file="<manifest>", detail="No name/display_name field found.")],
                     tags=["manifest"],
                 )
@@ -268,13 +287,13 @@ def _scan_manifest(skill: SkillIR) -> list[Finding]:
         if not any(key in manifest for key in ("publisher", "author", "repository", "homepage", "url")):
             findings.append(
                 Finding(
-                    id="meta.missing-provenance",
-                    title="Manifest missing publisher or provenance metadata",
+                    id="gatekeeper.sc004.missing-provenance",
+                    taxonomy_id="SC-004",
+                    stage=Stage.gatekeeper,
                     severity=Severity.medium,
                     category="supply_chain",
                     confidence=0.8,
-                    impact="Lack of publisher metadata weakens trust and incident response.",
-                    remediation="Add publisher identity and a repository or homepage URL.",
+                    decision_hint=Decision.review,
                     evidence=[Evidence(file="<manifest>", detail="No publisher/author/repository/homepage/url fields found.")],
                     tags=["provenance", "supply-chain"],
                 )
@@ -282,13 +301,13 @@ def _scan_manifest(skill: SkillIR) -> list[Finding]:
         if re.search(r"\b(latest|main|master)\b", manifest_text, re.IGNORECASE):
             findings.append(
                 Finding(
-                    id="meta.unpinned-reference",
-                    title="Manifest references floating versions or branches",
+                    id="gatekeeper.sc004.unpinned-reference",
+                    taxonomy_id="SC-004",
+                    stage=Stage.gatekeeper,
                     severity=Severity.low,
                     category="supply_chain",
                     confidence=0.7,
-                    impact="Floating references can make builds non-reproducible and increase supply-chain drift.",
-                    remediation="Pin versions, commit SHAs, or immutable release artifacts.",
+                    decision_hint=Decision.review,
                     evidence=[Evidence(file="<manifest>", detail="Manifest contains latest/main/master style reference.", excerpt=manifest_text[:160])],
                     tags=["supply-chain", "pinning"],
                 )
@@ -302,13 +321,13 @@ def _scan_hooks(skill: SkillIR) -> list[Finding]:
     if skill.hooks:
         findings.append(
             Finding(
-                id="exec.hook-entrypoint",
-                title="Hook or startup entrypoint present",
+                id="gatekeeper.pr003.hook-entrypoint",
+                taxonomy_id="PR-003",
+                stage=Stage.gatekeeper,
                 severity=Severity.high,
                 category="execution",
                 confidence=0.9,
-                impact="Install/startup hooks can execute before the user understands the full risk surface.",
-                remediation="Require explicit user approval and isolate hooks inside a sandboxed runtime.",
+                decision_hint=Decision.block,
                 evidence=[Evidence(file="<manifest>", detail=f"Entrypoint or hook detected: {entry}") for entry in skill.hooks],
                 tags=["hook", "startup"],
             )
@@ -318,13 +337,13 @@ def _scan_hooks(skill: SkillIR) -> list[Finding]:
         if filename_hits:
             findings.append(
                 Finding(
-                    id="exec.hook-file",
-                    title="Hook-like file present",
+                    id="gatekeeper.pr003.hook-file",
+                    taxonomy_id="PR-003",
+                    stage=Stage.gatekeeper,
                     severity=Severity.medium,
                     category="execution",
                     confidence=0.7,
-                    impact="Hook-related filenames suggest automatic execution paths that merit review.",
-                    remediation="Document whether the file is ever auto-executed and keep it behind explicit approval.",
+                    decision_hint=Decision.review,
                     evidence=[Evidence(file=path, detail="Filename contains a hook/startup/install keyword.") for path in filename_hits],
                     tags=["hook", "execution"],
                 )
@@ -336,17 +355,17 @@ def _scan_hooks(skill: SkillIR) -> list[Finding]:
 def _scan_urls(skill: SkillIR) -> list[Finding]:
     findings: list[Finding] = []
     for url in skill.urls:
-        for pattern, severity, suffix, impact in NETWORK_PATTERNS:
+        for pattern, severity, taxonomy_id, suffix, decision in NETWORK_PATTERNS:
             if re.search(pattern, url, re.IGNORECASE):
                 findings.append(
                     Finding(
-                        id=f"network.{suffix}",
-                        title=f"Network target detected: {suffix}",
+                        id=f"gatekeeper.{taxonomy_id.lower()}.{suffix}::{url}",
+                        taxonomy_id=taxonomy_id,
+                        stage=Stage.gatekeeper,
                         severity=severity,
                         category="network",
                         confidence=0.75,
-                        impact=impact,
-                        remediation="Constrain egress to an allowlist and block localhost, private-network, and metadata endpoints by default.",
+                        decision_hint=decision,
                         evidence=[Evidence(file="<urls>", detail=f"Referenced URL: {url}", excerpt=url)],
                         tags=["network", suffix],
                     )
@@ -380,7 +399,7 @@ def _dedupe(findings: Iterable[Finding]) -> list[Finding]:
         key = (finding.id, tuple((ev.file, ev.line, ev.excerpt) for ev in finding.evidence).__repr__())
         unique[key] = finding
     ordered = list(unique.values())
-    ordered.sort(key=lambda item: (_severity_rank(item.severity), item.id), reverse=True)
+    ordered.sort(key=lambda item: (_severity_rank(item.severity), item.taxonomy_id, item.id), reverse=True)
     return ordered
 
 

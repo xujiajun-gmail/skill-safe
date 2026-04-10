@@ -16,12 +16,13 @@ SEVERITY_POINTS = {
 
 def score_findings(findings: list[Finding]) -> ScoreCard:
     category_counts = Counter(finding.category for finding in findings)
+    domains = Counter(finding.taxonomy_id.split("-", 1)[0] for finding in findings)
     severity_points = sum(SEVERITY_POINTS[finding.severity] for finding in findings)
-    malice = min(100, severity_points + 10 * category_counts.get("semantic", 0) + 8 * category_counts.get("prompt_safety", 0))
-    exploitability = min(100, severity_points + 12 * category_counts.get("execution", 0) + 10 * category_counts.get("network", 0))
-    blast_radius = min(100, severity_points + 12 * category_counts.get("exfiltration", 0) + 10 * category_counts.get("secrets", 0))
-    privilege_excess = min(100, 15 * category_counts.get("permissions", 0) + 12 * category_counts.get("execution", 0) + 8 * category_counts.get("network", 0))
-    supply_chain_trust = max(0, 100 - (12 * category_counts.get("supply_chain", 0) + 5 * len(findings)))
+    malice = min(100, severity_points + 8 * domains.get("SC", 0) + 8 * domains.get("PI", 0))
+    exploitability = min(100, severity_points + 12 * domains.get("EX", 0) + 8 * domains.get("PR", 0))
+    blast_radius = min(100, severity_points + 12 * domains.get("DA", 0) + 10 * domains.get("MP", 0))
+    privilege_excess = min(100, 12 * domains.get("EX", 0) + 12 * domains.get("AL", 0) + 8 * category_counts.get("permissions", 0))
+    supply_chain_trust = max(0, 100 - (12 * domains.get("SC", 0) + 8 * domains.get("AL", 0) + 4 * len(findings)))
     overall = _overall_label(malice, exploitability, blast_radius, privilege_excess, supply_chain_trust)
     return ScoreCard(
         malice_likelihood=malice,

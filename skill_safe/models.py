@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -12,6 +12,27 @@ class Severity(str, Enum):
     medium = "medium"
     high = "high"
     critical = "critical"
+
+
+class Stage(str, Enum):
+    gatekeeper = "gatekeeper"
+    alignment = "alignment"
+    flow = "flow"
+    dynamic = "dynamic"
+
+
+class Decision(str, Enum):
+    allow = "allow"
+    review = "review"
+    block = "block"
+    sandbox_only = "sandbox_only"
+
+
+class AlignmentStatus(str, Enum):
+    match = "match"
+    over_declared = "over_declared"
+    under_declared = "under_declared"
+    mixed = "mixed"
 
 
 @dataclass(slots=True)
@@ -42,6 +63,15 @@ class SkillIR:
     hooks: list[str] = field(default_factory=list)
     urls: list[str] = field(default_factory=list)
 
+    def natural_language_blob(self) -> str:
+        parts: list[str] = []
+        if self.manifest:
+            parts.append(str(self.manifest))
+        for file in self.files:
+            if file.text and file.path.lower().endswith((".md", ".txt", ".json", ".toml", ".yaml", ".yml")):
+                parts.append(file.text)
+        return "\n".join(parts)
+
 
 @dataclass(slots=True)
 class Evidence:
@@ -55,21 +85,31 @@ class Evidence:
 
 
 @dataclass(slots=True)
+class LLMMetadata:
+    llm_used: bool = False
+    llm_provider: str | None = None
+    llm_model: str | None = None
+    llm_prompt_version: str | None = None
+    llm_confidence: float | None = None
+    evidence_refs: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(slots=True)
 class Finding:
     id: str
-    title: str
+    taxonomy_id: str
+    stage: Stage
     severity: Severity
     category: str
     confidence: float
-    impact: str
-    remediation: str
+    decision_hint: Decision
     evidence: list[Evidence]
     tags: list[str] = field(default_factory=list)
-
-    def to_dict(self) -> dict[str, Any]:
-        data = asdict(self)
-        data["severity"] = self.severity.value
-        return data
+    alignment_status: AlignmentStatus | None = None
+    llm: LLMMetadata = field(default_factory=LLMMetadata)
 
 
 @dataclass(slots=True)
@@ -83,22 +123,28 @@ class ScoreCard:
 
 
 @dataclass(slots=True)
+class TrustProfile:
+    publisher_confidence: str
+    provenance_status: str
+    permission_transparency: str
+    version_stability: str
+    continuous_monitoring_status: str
+    security_score: int
+
+
+@dataclass(slots=True)
 class ScanReport:
+    schema_version: str
     target: str
     source: SourceInfo
+    output_language: str
+    decision: Decision
     summary: dict[str, Any]
     scores: ScoreCard
+    trust_profile: TrustProfile
+    provenance: dict[str, Any]
     findings: list[Finding]
+    flows: list[dict[str, Any]]
+    runtime_trace: dict[str, Any] | None
     artifacts: dict[str, Any]
-    sandbox_observations: dict[str, Any]
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "target": self.target,
-            "source": asdict(self.source),
-            "summary": self.summary,
-            "scores": asdict(self.scores),
-            "findings": [finding.to_dict() for finding in self.findings],
-            "artifacts": self.artifacts,
-            "sandbox_observations": self.sandbox_observations,
-        }
+    llm: LLMMetadata = field(default_factory=LLMMetadata)

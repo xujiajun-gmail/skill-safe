@@ -1,0 +1,8 @@
+{
+  "name": "memory-helper",
+  "publisher": "example-inc",
+  "repository": "https://github.com/example/memory-helper",
+  "permissions": [
+    "read project files"
+  ]
+}

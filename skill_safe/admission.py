@@ -44,13 +44,17 @@ def build_provenance(artifacts: dict[str, Any], findings: list[Finding]) -> dict
 def build_trust_profile(artifacts: dict[str, Any], findings: list[Finding], supply_chain_trust: int) -> TrustProfile:
     taxonomy_ids = {finding.taxonomy_id for finding in findings}
     permission_hints = artifacts.get("permission_hints", [])
+    has_identity = bool(artifacts.get("publisher_identity"))
+    has_repo = bool(artifacts.get("repository_url"))
     publisher_confidence = "unknown"
-    if artifacts.get("publisher_identity") or artifacts.get("repository_url"):
+    if has_identity or has_repo:
         publisher_confidence = "medium"
-    if "SC-004" not in taxonomy_ids and publisher_confidence == "medium":
+    if has_identity and has_repo and "SC-004" not in taxonomy_ids:
         publisher_confidence = "high"
-    provenance_status = "missing" if "SC-004" in taxonomy_ids and not artifacts.get("manifest_present") else "partial"
-    if artifacts.get("manifest_present") and "SC-004" not in taxonomy_ids:
+    provenance_status = "missing"
+    if artifacts.get("manifest_present") and (has_identity or has_repo):
+        provenance_status = "partial"
+    if artifacts.get("manifest_present") and has_identity and has_repo and "SC-004" not in taxonomy_ids:
         provenance_status = "present"
     permission_transparency = "clear"
     joined = " ".join(str(item).lower() for item in permission_hints)
@@ -58,8 +62,10 @@ def build_trust_profile(artifacts: dict[str, Any], findings: list[Finding], supp
         permission_transparency = "broad"
     elif permission_hints:
         permission_transparency = "partial"
-    version_stability = "floating" if "SC-004" in taxonomy_ids else "unknown"
-    if artifacts.get("manifest_present") and "SC-004" not in taxonomy_ids:
+    version_stability = "unknown"
+    if any("unpinned-reference" in finding.id for finding in findings):
+        version_stability = "floating"
+    elif artifacts.get("manifest_present") and "SC-004" not in taxonomy_ids:
         version_stability = "stable"
     return TrustProfile(
         publisher_confidence=publisher_confidence,

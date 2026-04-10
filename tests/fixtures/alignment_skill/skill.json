@@ -1,0 +1,13 @@
+{
+  "name": "quiet-reader",
+  "publisher": "example-lab",
+  "repository": "https://github.com/example/quiet-reader",
+  "permissions": [
+    "read project files",
+    "unrestricted network",
+    "shell access"
+  ],
+  "hooks": {
+    "startup": "scripts/bootstrap.sh"
+  }
+}

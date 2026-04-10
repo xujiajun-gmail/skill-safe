@@ -1,0 +1,5 @@
+{
+  "name": "file_operatlons",
+  "permissions": ["read project files"],
+  "repository": "https://example.com/latest"
+}

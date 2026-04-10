@@ -9,6 +9,7 @@ from skill_safe.ingest import ingest_target
 from skill_safe.i18n import detect_language
 from skill_safe.admission import build_summary
 from skill_safe.scanners import run_static_analysis
+from skill_safe.policy import apply_policy_profile
 from skill_safe.scoring import score_findings
 from skill_safe.semantic import run_semantic_review
 
@@ -119,6 +120,240 @@ class ScanTests(unittest.TestCase):
             [item["taxonomy_id"] for item in en_payload["findings"]],
         )
         self.assertNotEqual(zh_payload["findings"][0]["title"], en_payload["findings"][0]["title"])
+
+    def test_strict_policy_profile_can_escalate_alignment_risk(self) -> None:
+        skill = ingest_target(str(FIXTURES / "risky_skill"))
+        findings = run_static_analysis(skill) + run_semantic_review(skill)
+        default_alignment = [f for f in findings if f.taxonomy_id == "AL-001"]
+        self.assertTrue(default_alignment)
+        self.assertTrue(all(f.decision_hint.value == "review" for f in default_alignment))
+        strict_findings = apply_policy_profile(findings, "strict")
+        strict_alignment = [f for f in strict_findings if f.taxonomy_id == "AL-001"]
+        self.assertTrue(strict_alignment)
+        self.assertTrue(all(f.decision_hint.value == "block" for f in strict_alignment))
+
+    def test_config_file_can_override_taxonomy_decision(self) -> None:
+        target = FIXTURES / "risky_skill"
+        config_path = Path(self._testMethodName + ".yml")
+        config_path.write_text(
+            "\n".join(
+                [
+                    "version: 1",
+                    "policy:",
+                    "  profile: default",
+                    "  taxonomy_overrides:",
+                    "    PI-001: block",
+                    "language:",
+                    "  mode: en",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        try:
+            from io import StringIO
+            import contextlib
+
+            buffer = StringIO()
+            with contextlib.redirect_stdout(buffer):
+                exit_code = main(["scan", str(target), "--format", "json", "--config", str(config_path)])
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(buffer.getvalue())
+            pi_findings = [item for item in payload["findings"] if item["taxonomy_id"] == "PI-001"]
+            self.assertTrue(pi_findings)
+            self.assertTrue(all(item["decision_hint"] == "block" for item in pi_findings))
+            self.assertEqual(payload["output_language"], "en")
+        finally:
+            if config_path.exists():
+                config_path.unlink()
+
+    def test_supply_chain_fixture_hits_sc004_and_sc002(self) -> None:
+        target = FIXTURES / "supply_chain_skill"
+        from io import StringIO
+        import contextlib
+
+        buffer = StringIO()
+        with contextlib.redirect_stdout(buffer):
+            exit_code = main(["scan", str(target), "--format", "json", "--lang", "en"])
+        self.assertEqual(exit_code, 0)
+        payload = json.loads(buffer.getvalue())
+        taxonomy_ids = {item["taxonomy_id"] for item in payload["findings"]}
+        self.assertIn("SC-004", taxonomy_ids)
+        self.assertIn("SC-002", taxonomy_ids)
+        self.assertEqual(payload["trust_profile"]["version_stability"], "floating")
+
+    def test_alignment_fixture_detects_under_declared_behavior(self) -> None:
+        skill = ingest_target(str(FIXTURES / "alignment_skill"))
+        gatekeeper_findings = run_static_analysis(skill)
+        findings = gatekeeper_findings + run_semantic_review(skill, gatekeeper_findings=gatekeeper_findings)
+        alignment_findings = [finding for finding in findings if finding.taxonomy_id == "AL-001"]
+        self.assertTrue(alignment_findings)
+        self.assertTrue(any(finding.alignment_status.value == "under_declared" for finding in alignment_findings))
+        joined_tags = {tag for finding in alignment_findings for tag in finding.tags}
+        self.assertIn("no_network_claim_conflicts_with_network_behavior", joined_tags)
+        self.assertIn("no_shell_claim_conflicts_with_shell_behavior", joined_tags)
+
+    def test_config_can_relax_localhost_without_relaxing_metadata(self) -> None:
+        target = FIXTURES / "network_skill"
+        config_path = Path(self._testMethodName + ".yml")
+        config_path.write_text(
+            "\n".join(
+                [
+                    "version: 1",
+                    "policy:",
+                    "  allow_localhost: true",
+                    "  allow_private_network: false",
+                    "  allow_metadata_access: false",
+                    "language:",
+                    "  mode: en",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        try:
+            from io import StringIO
+            import contextlib
+
+            buffer = StringIO()
+            with contextlib.redirect_stdout(buffer):
+                exit_code = main(["scan", str(target), "--format", "json", "--config", str(config_path)])
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(buffer.getvalue())
+            localhost = [
+                item for item in payload["findings"] if item["taxonomy_id"] == "PR-002" and "localhost" in item["tags"]
+            ]
+            metadata = [
+                item for item in payload["findings"] if item["taxonomy_id"] == "PR-002" and "metadata" in item["tags"]
+            ]
+            self.assertTrue(localhost)
+            self.assertTrue(metadata)
+            self.assertTrue(all(item["decision_hint"] == "review" for item in localhost))
+            self.assertTrue(all(item["decision_hint"] == "block" for item in metadata))
+        finally:
+            if config_path.exists():
+                config_path.unlink()
+
+    def test_config_can_relax_shell_and_startup_policy(self) -> None:
+        target = FIXTURES / "risky_skill"
+        config_path = Path(self._testMethodName + ".yml")
+        config_path.write_text(
+            "\n".join(
+                [
+                    "version: 1",
+                    "policy:",
+                    "  allow_shell: true",
+                    "  allow_startup_hooks: true",
+                    "language:",
+                    "  mode: en",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        try:
+            from io import StringIO
+            import contextlib
+
+            buffer = StringIO()
+            with contextlib.redirect_stdout(buffer):
+                exit_code = main(["scan", str(target), "--format", "json", "--config", str(config_path)])
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(buffer.getvalue())
+            shell_findings = [
+                item for item in payload["findings"] if item["taxonomy_id"] == "EX-003" and "shell" in item["tags"]
+            ]
+            hook_findings = [item for item in payload["findings"] if item["taxonomy_id"] == "PR-003"]
+            self.assertTrue(shell_findings)
+            self.assertTrue(hook_findings)
+            self.assertTrue(all(item["decision_hint"] == "review" for item in shell_findings))
+            self.assertTrue(all(item["decision_hint"] == "review" for item in hook_findings))
+        finally:
+            if config_path.exists():
+                config_path.unlink()
+
+    def test_memory_write_policy_toggle_can_downgrade_mp001(self) -> None:
+        target = FIXTURES / "memory_writer_skill"
+        skill = ingest_target(str(target))
+        default_findings = run_static_analysis(skill) + run_semantic_review(skill)
+        memory_findings = [finding for finding in default_findings if finding.taxonomy_id == "MP-001"]
+        self.assertTrue(memory_findings)
+        self.assertTrue(all(finding.decision_hint.value == "block" for finding in memory_findings))
+
+        config_path = Path(self._testMethodName + ".yml")
+        config_path.write_text(
+            "\n".join(
+                [
+                    "version: 1",
+                    "policy:",
+                    "  allow_memory_file_write: true",
+                    "language:",
+                    "  mode: en",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        try:
+            from io import StringIO
+            import contextlib
+
+            buffer = StringIO()
+            with contextlib.redirect_stdout(buffer):
+                exit_code = main(["scan", str(target), "--format", "json", "--config", str(config_path)])
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(buffer.getvalue())
+            memory_items = [item for item in payload["findings"] if item["taxonomy_id"] == "MP-001"]
+            self.assertTrue(memory_items)
+            self.assertTrue(all(item["decision_hint"] == "review" for item in memory_items))
+        finally:
+            if config_path.exists():
+                config_path.unlink()
+
+    def test_llm_config_can_be_resolved_from_config_and_cli(self) -> None:
+        target = FIXTURES / "basic_skill"
+        config_path = Path(self._testMethodName + ".yml")
+        config_path.write_text(
+            "\n".join(
+                [
+                    "version: 1",
+                    "llm:",
+                    "  mode: remote",
+                    "  provider: openai_compatible",
+                    "  base_url: https://llm.example/v1",
+                    "  model: scanner-default",
+                    "  api_key_env: SKILL_SAFE_API_KEY",
+                    "language:",
+                    "  mode: en",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        try:
+            from io import StringIO
+            import contextlib
+
+            buffer = StringIO()
+            with contextlib.redirect_stdout(buffer):
+                exit_code = main(
+                    [
+                        "scan",
+                        str(target),
+                        "--format",
+                        "json",
+                        "--config",
+                        str(config_path),
+                        "--llm-model",
+                        "scanner-override",
+                    ]
+                )
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(buffer.getvalue())
+            llm_config = payload["artifacts"]["llm_config"]
+            self.assertEqual(llm_config["mode"], "remote")
+            self.assertEqual(llm_config["provider"], "openai_compatible")
+            self.assertEqual(llm_config["base_url"], "https://llm.example/v1")
+            self.assertEqual(llm_config["model"], "scanner-override")
+            self.assertEqual(llm_config["api_key_env"], "SKILL_SAFE_API_KEY")
+        finally:
+            if config_path.exists():
+                config_path.unlink()
 
 
 if __name__ == "__main__":  # pragma: no cover

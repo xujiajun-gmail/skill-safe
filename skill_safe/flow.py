@@ -56,6 +56,8 @@ def run_flow_analysis(skill: SkillIR, findings: list[Finding]) -> tuple[list[Fin
                 "id": edge.edge_id,
                 "source_type": source.capability_type,
                 "source_skill": _skill_name(skill),
+                "source_node": _node_to_dict(source),
+                "sink_node": _node_to_dict(sink),
                 "transform": edge.transform,
                 "sink_type": sink_type,
                 "sink_target": sink.label,
@@ -63,6 +65,7 @@ def run_flow_analysis(skill: SkillIR, findings: list[Finding]) -> tuple[list[Fin
                 "blocked_by_policy": False,
                 "summary": edge.summary,
                 "path": [source.node_id, sink.node_id],
+                "path_labels": [source.label, sink.label],
             }
         )
 
@@ -159,6 +162,18 @@ def _node_label(finding: Finding) -> str:
     if finding.evidence:
         return finding.evidence[0].detail
     return finding.id
+
+
+def _node_to_dict(node: CapabilityNode) -> dict[str, Any]:
+    return {
+        "node_id": node.node_id,
+        "role": node.role,
+        "capability_type": node.capability_type,
+        "taxonomy_id": node.taxonomy_id,
+        "finding_id": node.finding_id,
+        "label": node.label,
+        "evidence_refs": _evidence_refs(node.finding),
+    }
 
 
 def _connect_nodes(
@@ -282,6 +297,16 @@ def _merge_evidence(left: Finding, right: Finding) -> list[Evidence]:
             if len(merged) >= 6:
                 return merged
     return merged
+
+
+def _evidence_refs(finding: Finding) -> list[str]:
+    refs: list[str] = []
+    for item in finding.evidence:
+        if item.line is not None:
+            refs.append(f"{item.file}:{item.line}")
+        else:
+            refs.append(item.file)
+    return refs[:6]
 
 
 def _skill_name(skill: SkillIR) -> str:

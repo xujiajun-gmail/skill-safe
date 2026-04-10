@@ -88,6 +88,8 @@ def _build_scan_explanation(payload: dict[str, Any], language: str) -> dict[str,
                 "id": flow.get("id"),
                 "triggered_taxonomy_ids": flow.get("triggered_taxonomy_ids", []),
                 "summary": flow.get("summary"),
+                "source_node": flow.get("source_node", {}),
+                "sink_node": flow.get("sink_node", {}),
             }
             for flow in flows[:3]
         ],
@@ -206,6 +208,13 @@ def _explanation_to_text(explanation: dict[str, Any]) -> str:
         for item in explanation["key_flows"]:
             lines.append(f"- {item['id']}: {', '.join(item['triggered_taxonomy_ids'])}")
             lines.append(f"  {item['summary']}")
+            source_node = item.get("source_node", {})
+            sink_node = item.get("sink_node", {})
+            if source_node and sink_node:
+                lines.append(
+                    f"  {source_node.get('capability_type')}({source_node.get('taxonomy_id')}) -> "
+                    f"{sink_node.get('capability_type')}({sink_node.get('taxonomy_id')})"
+                )
         lines.append("")
     if explanation.get("key_changes"):
         lines.append(f"{render_message(language, 'explain.key_changes')}:")

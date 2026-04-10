@@ -111,6 +111,13 @@ def _to_text(report: ScanReport) -> str:
             lines.append(
                 f"- {flow['id']} [{', '.join(flow['triggered_taxonomy_ids'])}] -> {flow['sink_type']}: {flow['summary']}"
             )
+            source_node = flow.get("source_node", {})
+            sink_node = flow.get("sink_node", {})
+            if source_node and sink_node:
+                lines.append(
+                    f"  source={source_node.get('capability_type')}({source_node.get('taxonomy_id')}) -> "
+                    f"sink={sink_node.get('capability_type')}({sink_node.get('taxonomy_id')})"
+                )
         lines.append("")
     if report.runtime_trace:
         lines.append(f"{render_message(language, 'text.sandbox')}: ")

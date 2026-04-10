@@ -63,6 +63,11 @@ class ScanTests(unittest.TestCase):
         secret_flow = next(item for item in payload["flows"] if item["id"] == "flow.ch004.secret-to-egress")
         self.assertNotIn("SC-004", secret_flow["triggered_taxonomy_ids"])
         self.assertEqual(len(secret_flow["path"]), 2)
+        self.assertIn("source_node", secret_flow)
+        self.assertIn("sink_node", secret_flow)
+        self.assertTrue(secret_flow["source_node"]["evidence_refs"])
+        self.assertTrue(secret_flow["sink_node"]["evidence_refs"])
+        self.assertEqual(len(secret_flow["path_labels"]), 2)
 
     def test_sarif_output_can_be_written(self) -> None:
         target = FIXTURES / "risky_skill"
@@ -519,6 +524,7 @@ class ScanTests(unittest.TestCase):
             self.assertIn("Explanation type: scan", text)
             self.assertIn("Key findings", text)
             self.assertIn("Key flows", text)
+            self.assertIn("secret_material(DA-001)", text)
             self.assertIn("Recommended actions", text)
         finally:
             if report_path.exists():

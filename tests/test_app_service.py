@@ -7,6 +7,7 @@ from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
+from app.service.history import ScanHistory
 from app.service.scan_service import UploadedFile, scan_archive_upload, scan_directory_upload, scan_path, scan_url
 from skill_safe.ingest import IngestError, ingest_target
 
@@ -46,7 +47,7 @@ class AppServiceTests(unittest.TestCase):
         self.assertEqual(response["request"]["input_mode"], "directory_upload")
         self.assertEqual(response["scan_report"]["decision"], "allow")
 
-    def test_scan_url_supports_local_http_server(self) -> None:
+    def test_scan_url_supports_mocked_download(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             archive_path = Path(temp_dir) / "skill.zip"
             with zipfile.ZipFile(archive_path, "w") as archive:
@@ -77,6 +78,39 @@ class AppServiceTests(unittest.TestCase):
                 archive.writestr("../escape.sh", "echo hacked")
             with self.assertRaises(IngestError):
                 ingest_target(str(archive_path))
+
+    def test_scan_url_rejects_credentialed_urls(self) -> None:
+        with self.assertRaises(ValueError):
+            scan_url("https://user:pass@example.test/skill.zip")
+
+    def test_scan_archive_upload_rejects_unsupported_extension(self) -> None:
+        with self.assertRaises(ValueError):
+            scan_archive_upload(UploadedFile(filename="skill.exe", content=b"not-archive"))
+
+    def test_history_store_keeps_latest_entries(self) -> None:
+        history = ScanHistory(max_entries=2)
+        first = history.add(_payload("scan-1", "allow", 1))
+        second = history.add(_payload("scan-2", "review", 2))
+        third = history.add(_payload("scan-3", "block", 3))
+        items = history.list_items()
+        self.assertEqual([item["scan_id"] for item in items], [third["scan_id"], second["scan_id"]])
+        self.assertIsNone(history.get_payload(first["scan_id"]))
+        self.assertIsNotNone(history.get_payload(third["scan_id"]))
+
+
+def _payload(target: str, decision: str, finding_count: int) -> dict[str, object]:
+    return {
+        "request": {"input_mode": "path", "source_hint": target},
+        "scan_report": {
+            "target": target,
+            "output_language": "en",
+            "decision": decision,
+            "summary": {"finding_count": finding_count},
+            "scores": {"overall": "medium"},
+        },
+        "explanation": {},
+        "explanation_text": "demo",
+    }
 
 
 if __name__ == "__main__":  # pragma: no cover

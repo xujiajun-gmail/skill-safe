@@ -14,6 +14,9 @@ from skill_safe.reporting import report_to_dict
 
 DEFAULT_DOWNLOAD_TIMEOUT_SECONDS = 30
 DEFAULT_MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
+DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+DEFAULT_MAX_DIRECTORY_FILES = 2000
+SUPPORTED_ARCHIVE_SUFFIXES = (".zip", ".tar", ".tgz", ".tar.gz", ".tar.bz2", ".tar.xz")
 
 
 @dataclass(slots=True)
@@ -30,6 +33,8 @@ def scan_path(path: str, *, lang: str = "auto", dynamic: bool = False) -> dict[s
 
 
 def scan_archive_upload(file: UploadedFile, *, lang: str = "auto", dynamic: bool = False) -> dict[str, object]:
+    _validate_upload_size(len(file.content), file.filename)
+    _validate_archive_filename(file.filename)
     suffix = "".join(Path(file.filename).suffixes) or mimetypes.guess_extension("application/octet-stream") or ".bin"
     with tempfile.TemporaryDirectory(prefix="skill-safe-app-archive-") as temp_dir:
         archive_path = Path(temp_dir) / f"upload{suffix}"
@@ -40,6 +45,10 @@ def scan_archive_upload(file: UploadedFile, *, lang: str = "auto", dynamic: bool
 def scan_directory_upload(files: list[UploadedFile], *, lang: str = "auto", dynamic: bool = False) -> dict[str, object]:
     if not files:
         raise ValueError("No directory files were uploaded.")
+    if len(files) > DEFAULT_MAX_DIRECTORY_FILES:
+        raise ValueError(f"Uploaded directory exceeds the {DEFAULT_MAX_DIRECTORY_FILES} file limit.")
+    total_bytes = sum(len(file.content) for file in files)
+    _validate_upload_size(total_bytes, "directory upload")
     with tempfile.TemporaryDirectory(prefix="skill-safe-app-dir-") as temp_dir:
         root = Path(temp_dir) / "skill"
         root.mkdir(parents=True, exist_ok=True)
@@ -58,6 +67,10 @@ def scan_url(url: str, *, lang: str = "auto", dynamic: bool = False) -> dict[str
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in {"http", "https"}:
         raise ValueError("Only http/https URLs are supported.")
+    if not parsed.netloc:
+        raise ValueError("URL must include a hostname.")
+    if parsed.username or parsed.password:
+        raise ValueError("Credentialed URLs are not supported.")
     suffix = "".join(Path(parsed.path).suffixes) or ".download"
     with tempfile.TemporaryDirectory(prefix="skill-safe-app-url-") as temp_dir:
         target_path = Path(temp_dir) / f"remote{suffix}"
@@ -106,6 +119,17 @@ def _download_bytes(request: urllib.request.Request) -> bytes:
                 raise ValueError("Downloaded skill exceeds the 50 MB limit.")
             chunks.append(chunk)
     return b"".join(chunks)
+
+
+def _validate_upload_size(size: int, label: str) -> None:
+    if size > DEFAULT_MAX_UPLOAD_BYTES:
+        raise ValueError(f"{label} exceeds the 50 MB limit.")
+
+
+def _validate_archive_filename(filename: str) -> None:
+    lowered = filename.lower()
+    if not lowered.endswith(SUPPORTED_ARCHIVE_SUFFIXES):
+        raise ValueError("Uploaded archive must be one of: .zip, .tar, .tgz, .tar.gz, .tar.bz2, .tar.xz")
 
 
 def _validate_lang(lang: str) -> None:

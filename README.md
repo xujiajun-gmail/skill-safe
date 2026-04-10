@@ -77,6 +77,10 @@ http://127.0.0.1:8000
 Available REST endpoints:
 
 - `GET /api/v1/health`
+- `GET /api/v1/history`
+- `GET /api/v1/history/{scan_id}`
+- `GET /api/v1/history/{scan_id}/download?artifact=scan_report&format=json`
+- `GET /api/v1/history/{scan_id}/download?artifact=explanation&format=json|text`
 - `POST /api/v1/scan/path` with JSON `{ "path": "...", "lang": "auto|zh|en", "dynamic": false }`
 - `POST /api/v1/scan/url` with JSON `{ "url": "...", "lang": "auto|zh|en", "dynamic": false }`
 - `POST /api/v1/scan/upload` with `multipart/form-data`
@@ -86,8 +90,9 @@ Available REST endpoints:
 Notes:
 
 - The UI is decoupled from the scanner service and calls the REST API via `fetch`.
-- URL scans currently accept `http` / `https` only.
-- Downloaded remote content is capped at 50 MB by default.
+- Scan history is kept in-memory for the current server process and can be re-opened from the UI.
+- URL scans currently accept `http` / `https` only, and credentialed URLs are rejected.
+- Downloaded remote content and uploaded content are capped at 50 MB by default.
 
 ## Example JSON fields
 

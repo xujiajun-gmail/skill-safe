@@ -21,6 +21,12 @@ const UI_STRINGS = {
     actionTitle: "建议动作",
     textTitle: "文字版报告",
     jsonTitle: "原始 JSON",
+    historyTitle: "扫描历史",
+    historyHint: "最近扫描结果会保存在当前服务进程的内存中。",
+    refreshHistoryButton: "刷新",
+    downloadReportJson: "下载报告 JSON",
+    downloadExplanationJson: "下载解释 JSON",
+    downloadExplanationText: "下载文字报告",
     statusIdle: "空闲",
     statusRunning: "扫描中",
     statusDone: "已完成",
@@ -41,11 +47,17 @@ const UI_STRINGS = {
     noFindings: "无关键发现",
     noFlows: "无关键攻击链",
     noActions: "暂无建议动作",
+    noHistory: "暂无历史记录",
     missingArchive: "请先选择压缩包。",
     missingDirectory: "请先选择目录。",
     missingUrl: "请输入 URL。",
     missingPath: "请输入服务器本地路径。",
     apiError: "请求失败",
+    historyLoadError: "读取历史失败",
+    historySource: "来源",
+    historyDecision: "决策",
+    historyFindings: "发现",
+    historyTime: "时间",
   },
   en: {
     title: "Skill Scanner Web App",
@@ -69,6 +81,12 @@ const UI_STRINGS = {
     actionTitle: "Recommended Actions",
     textTitle: "Text Report",
     jsonTitle: "Raw JSON",
+    historyTitle: "Scan History",
+    historyHint: "Recent scan results are kept in the current service process memory.",
+    refreshHistoryButton: "Refresh",
+    downloadReportJson: "Download Report JSON",
+    downloadExplanationJson: "Download Explanation JSON",
+    downloadExplanationText: "Download Text Report",
     statusIdle: "Idle",
     statusRunning: "Running",
     statusDone: "Done",
@@ -89,11 +107,17 @@ const UI_STRINGS = {
     noFindings: "No key findings",
     noFlows: "No key flows",
     noActions: "No recommended actions",
+    noHistory: "No history yet",
     missingArchive: "Please choose an archive first.",
     missingDirectory: "Please choose a directory first.",
     missingUrl: "Please enter a URL.",
     missingPath: "Please enter a server-local path.",
     apiError: "Request failed",
+    historyLoadError: "Failed to load history",
+    historySource: "Source",
+    historyDecision: "Decision",
+    historyFindings: "Findings",
+    historyTime: "Time",
   },
 };
 
@@ -104,6 +128,14 @@ const reportLanguage = document.getElementById("reportLanguage");
 const statusBadge = document.getElementById("statusBadge");
 const resultEmpty = document.getElementById("resultEmpty");
 const resultContent = document.getElementById("resultContent");
+const historyList = document.getElementById("historyList");
+const refreshHistoryButton = document.getElementById("refreshHistoryButton");
+const downloadReportJsonButton = document.getElementById("downloadReportJson");
+const downloadExplanationJsonButton = document.getElementById("downloadExplanationJson");
+const downloadExplanationTextButton = document.getElementById("downloadExplanationText");
+
+let currentScanId = null;
+let currentPayload = null;
 
 function activeUiLang() {
   const value = uiLanguage.value;
@@ -148,15 +180,22 @@ function refreshUiText() {
     ["actionTitle", "actionTitle"],
     ["textTitle", "textTitle"],
     ["jsonTitle", "jsonTitle"],
+    ["historyTitle", "historyTitle"],
+    ["historyHint", "historyHint"],
   ]) {
     document.getElementById(id).textContent = strings[key];
   }
+  refreshHistoryButton.textContent = strings.refreshHistoryButton;
+  downloadReportJsonButton.textContent = strings.downloadReportJson;
+  downloadExplanationJsonButton.textContent = strings.downloadExplanationJson;
+  downloadExplanationTextButton.textContent = strings.downloadExplanationText;
   const options = inputMode.options;
   options[0].text = strings.inputArchive;
   options[1].text = strings.inputDirectory;
   options[2].text = strings.inputUrl;
   options[3].text = strings.inputPath;
   setStatus(statusBadge.dataset.state || "idle");
+  renderHistoryFromDomState();
 }
 
 function toggleModePanels() {
@@ -189,6 +228,7 @@ async function submitScan(event) {
     setStatus("running");
     const response = await sendRequest(mode);
     renderResult(response);
+    renderHistory(response.history?.items || []);
     setStatus("done");
   } catch (error) {
     renderError(error);
@@ -249,6 +289,9 @@ async function fetchJson(url, options) {
 }
 
 function renderResult(payload) {
+  currentPayload = payload;
+  currentScanId = payload?.history?.item?.scan_id || currentScanId;
+  updateDownloadButtons();
   resultEmpty.classList.add("hidden");
   resultContent.classList.remove("hidden");
   const explanation = payload.explanation || {};
@@ -343,6 +386,9 @@ function renderList(elementId, items, emptyText = "") {
 }
 
 function renderError(error) {
+  currentPayload = null;
+  currentScanId = null;
+  updateDownloadButtons();
   resultEmpty.classList.add("hidden");
   resultContent.classList.remove("hidden");
   document.getElementById("headlineText").textContent = error.message || t("apiError");
@@ -353,6 +399,72 @@ function renderError(error) {
   renderList("actionsList", []);
   document.getElementById("explanationText").textContent = error.stack || String(error);
   document.getElementById("rawJson").textContent = JSON.stringify({ error: error.message }, null, 2);
+}
+
+async function loadHistory() {
+  try {
+    const payload = await fetchJson("/api/v1/history", { method: "GET" });
+    renderHistory(payload.items || []);
+  } catch (error) {
+    historyList.innerHTML = `<p class="muted">${escapeHtml(`${t("historyLoadError")}: ${error.message}`)}</p>`;
+  }
+}
+
+function renderHistory(items) {
+  historyList.dataset.items = JSON.stringify(items);
+  renderHistoryFromDomState();
+}
+
+function renderHistoryFromDomState() {
+  const raw = historyList.dataset.items;
+  const items = raw ? JSON.parse(raw) : [];
+  historyList.innerHTML = "";
+  if (!items.length) {
+    historyList.innerHTML = `<p class="muted">${escapeHtml(t("noHistory"))}</p>`;
+    return;
+  }
+  for (const item of items) {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = `history-card${currentScanId === item.scan_id ? " active" : ""}`;
+    card.innerHTML = `
+      <span class="history-id">${escapeHtml(item.scan_id || "-")}</span>
+      <strong>${escapeHtml(item.decision || "-")} · ${escapeHtml(item.overall || "-")}</strong>
+      <span>${escapeHtml(t("historySource"))}: ${escapeHtml(item.source_hint || "-")}</span>
+      <span>${escapeHtml(t("historyFindings"))}: ${escapeHtml(String(item.finding_count ?? 0))}</span>
+      <span>${escapeHtml(t("historyTime"))}: ${escapeHtml(item.created_at || "-")}</span>
+    `;
+    card.addEventListener("click", () => loadHistoryItem(item.scan_id));
+    historyList.appendChild(card);
+  }
+}
+
+async function loadHistoryItem(scanId) {
+  try {
+    const payload = await fetchJson(`/api/v1/history/${encodeURIComponent(scanId)}`, { method: "GET" });
+    currentScanId = scanId;
+    renderResult(payload);
+    renderHistoryFromDomState();
+    setStatus("done");
+  } catch (error) {
+    renderError(error);
+    setStatus("error");
+  }
+}
+
+function updateDownloadButtons() {
+  const disabled = !currentScanId;
+  downloadReportJsonButton.disabled = disabled;
+  downloadExplanationJsonButton.disabled = disabled;
+  downloadExplanationTextButton.disabled = disabled;
+}
+
+function downloadArtifact(artifact, format) {
+  if (!currentScanId) {
+    return;
+  }
+  const url = `/api/v1/history/${encodeURIComponent(currentScanId)}/download?artifact=${encodeURIComponent(artifact)}&format=${encodeURIComponent(format)}`;
+  window.open(url, "_blank", "noopener");
 }
 
 function escapeHtml(value) {
@@ -367,7 +479,13 @@ function escapeHtml(value) {
 uiLanguage.addEventListener("change", refreshUiText);
 inputMode.addEventListener("change", toggleModePanels);
 form.addEventListener("submit", submitScan);
+refreshHistoryButton.addEventListener("click", loadHistory);
+downloadReportJsonButton.addEventListener("click", () => downloadArtifact("scan_report", "json"));
+downloadExplanationJsonButton.addEventListener("click", () => downloadArtifact("explanation", "json"));
+downloadExplanationTextButton.addEventListener("click", () => downloadArtifact("explanation", "text"));
 
 refreshUiText();
 toggleModePanels();
 setStatus("idle");
+updateDownloadButtons();
+loadHistory();

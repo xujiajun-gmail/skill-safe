@@ -19,77 +19,94 @@
         <div class="hero-actions">
           <span class="badge">REST API</span>
           <span class="badge">ZH / EN</span>
+          <span class="badge">History</span>
         </div>
       </header>
 
       <main class="layout">
-        <section class="panel">
-          <h2 id="scanFormTitle">开始扫描</h2>
-          <form id="scanForm">
-            <div class="field">
-              <label for="uiLanguage" id="uiLangLabel">界面语言</label>
-              <select id="uiLanguage" name="ui_language">
-                <option value="auto">Auto</option>
-                <option value="zh">中文</option>
-                <option value="en">English</option>
-              </select>
+        <aside class="sidebar">
+          <section class="panel">
+            <h2 id="scanFormTitle">开始扫描</h2>
+            <form id="scanForm">
+              <div class="field">
+                <label for="uiLanguage" id="uiLangLabel">界面语言</label>
+                <select id="uiLanguage" name="ui_language">
+                  <option value="auto">Auto</option>
+                  <option value="zh">中文</option>
+                  <option value="en">English</option>
+                </select>
+              </div>
+
+              <div class="field">
+                <label for="reportLanguage" id="reportLangLabel">报告语言</label>
+                <select id="reportLanguage" name="lang">
+                  <option value="auto">Auto</option>
+                  <option value="zh">中文</option>
+                  <option value="en">English</option>
+                </select>
+              </div>
+
+              <div class="field">
+                <label for="inputMode" id="inputModeLabel">输入方式</label>
+                <select id="inputMode" name="input_mode">
+                  <option value="archive">压缩包</option>
+                  <option value="directory">目录</option>
+                  <option value="url">URL</option>
+                  <option value="path">服务器本地路径</option>
+                </select>
+              </div>
+
+              <div class="field mode-panel" data-mode-panel="archive">
+                <label for="archiveFile" id="archiveLabel">上传压缩包</label>
+                <input id="archiveFile" name="archive" type="file" accept=".zip,.tar,.tar.gz,.tgz,.tar.bz2,.tar.xz" />
+              </div>
+
+              <div class="field mode-panel hidden" data-mode-panel="directory">
+                <label for="directoryFile" id="directoryLabel">上传目录</label>
+                <input id="directoryFile" name="files" type="file" webkitdirectory directory multiple />
+                <p class="hint" id="directoryHint">浏览器会保留目录内相对路径。</p>
+              </div>
+
+              <div class="field mode-panel hidden" data-mode-panel="url">
+                <label for="skillUrl" id="urlLabel">Skill URL</label>
+                <input id="skillUrl" name="url" type="url" placeholder="https://example.com/skill.zip" />
+              </div>
+
+              <div class="field mode-panel hidden" data-mode-panel="path">
+                <label for="skillPath" id="pathLabel">服务器本地路径</label>
+                <input id="skillPath" name="path" type="text" placeholder="/path/to/skill-or-archive" />
+              </div>
+
+              <label class="checkbox">
+                <input id="dynamicMode" name="dynamic" type="checkbox" />
+                <span id="dynamicLabel">启用动态观察模式</span>
+              </label>
+
+              <div class="actions">
+                <button id="submitButton" type="submit">开始扫描</button>
+              </div>
+            </form>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header tight">
+              <h2 id="historyTitle">扫描历史</h2>
+              <button id="refreshHistoryButton" type="button" class="secondary-button">刷新</button>
             </div>
+            <p id="historyHint" class="hint">最近扫描结果会保存在当前服务进程的内存中。</p>
+            <div id="historyList" class="history-list"></div>
+          </section>
+        </aside>
 
-            <div class="field">
-              <label for="reportLanguage" id="reportLangLabel">报告语言</label>
-              <select id="reportLanguage" name="lang">
-                <option value="auto">Auto</option>
-                <option value="zh">中文</option>
-                <option value="en">English</option>
-              </select>
-            </div>
-
-            <div class="field">
-              <label for="inputMode" id="inputModeLabel">输入方式</label>
-              <select id="inputMode" name="input_mode">
-                <option value="archive">压缩包</option>
-                <option value="directory">目录</option>
-                <option value="url">URL</option>
-                <option value="path">服务器本地路径</option>
-              </select>
-            </div>
-
-            <div class="field mode-panel" data-mode-panel="archive">
-              <label for="archiveFile" id="archiveLabel">上传压缩包</label>
-              <input id="archiveFile" name="archive" type="file" accept=".zip,.tar,.tar.gz,.tgz,.tar.bz2,.tar.xz" />
-            </div>
-
-            <div class="field mode-panel hidden" data-mode-panel="directory">
-              <label for="directoryFile" id="directoryLabel">上传目录</label>
-              <input id="directoryFile" name="files" type="file" webkitdirectory directory multiple />
-              <p class="hint" id="directoryHint">浏览器会保留目录内相对路径。</p>
-            </div>
-
-            <div class="field mode-panel hidden" data-mode-panel="url">
-              <label for="skillUrl" id="urlLabel">Skill URL</label>
-              <input id="skillUrl" name="url" type="url" placeholder="https://example.com/skill.zip" />
-            </div>
-
-            <div class="field mode-panel hidden" data-mode-panel="path">
-              <label for="skillPath" id="pathLabel">服务器本地路径</label>
-              <input id="skillPath" name="path" type="text" placeholder="/path/to/skill-or-archive" />
-            </div>
-
-            <label class="checkbox">
-              <input id="dynamicMode" name="dynamic" type="checkbox" />
-              <span id="dynamicLabel">启用动态观察模式</span>
-            </label>
-
-            <div class="actions">
-              <button id="submitButton" type="submit">开始扫描</button>
-            </div>
-          </form>
-        </section>
-
-        <section class="panel">
+        <section class="panel result-panel">
           <div class="panel-header">
             <h2 id="resultTitle">扫描结果</h2>
             <span id="statusBadge" class="status-badge">Idle</span>
+          </div>
+          <div class="toolbar">
+            <button id="downloadReportJson" type="button" class="secondary-button" disabled>下载报告 JSON</button>
+            <button id="downloadExplanationJson" type="button" class="secondary-button" disabled>下载解释 JSON</button>
+            <button id="downloadExplanationText" type="button" class="secondary-button" disabled>下载文字报告</button>
           </div>
           <div id="resultEmpty" class="empty-state">
             <p id="emptyText">提交一个 Skill 之后，这里会显示可读报告、结构化结果和原始 JSON。</p>

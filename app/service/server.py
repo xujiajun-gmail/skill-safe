@@ -7,15 +7,17 @@ import mimetypes
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from skill_safe import __version__
 from skill_safe.ingest import IngestError
 
+from app.service.history import ScanHistory
 from app.service.scan_service import UploadedFile, scan_archive_upload, scan_directory_upload, scan_path, scan_url
 
 APP_ROOT = Path(__file__).resolve().parents[1]
 UI_ROOT = APP_ROOT / "ui"
+HISTORY = ScanHistory(max_entries=100)
 
 
 class SkillSafeAppHandler(BaseHTTPRequestHandler):
@@ -23,10 +25,19 @@ class SkillSafeAppHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
-        if parsed.path == "/api/v1/health":
-            self._send_json(HTTPStatus.OK, {"status": "ok", "service": "skill-safe-web", "version": __version__})
-            return
-        self._serve_static(parsed.path)
+        try:
+            if parsed.path == "/api/v1/health":
+                self._send_json(HTTPStatus.OK, {"status": "ok", "service": "skill-safe-web", "version": __version__})
+                return
+            if parsed.path == "/api/v1/history":
+                self._send_json(HTTPStatus.OK, {"items": HISTORY.list_items()})
+                return
+            if parsed.path.startswith("/api/v1/history/"):
+                self._handle_history_get(parsed)
+                return
+            self._serve_static(parsed.path)
+        except Exception as exc:  # noqa: BLE001
+            self._handle_api_error(exc)
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
@@ -38,7 +49,7 @@ class SkillSafeAppHandler(BaseHTTPRequestHandler):
                     lang=self._parse_lang(payload.get("lang", "auto")),
                     dynamic=self._parse_bool(payload.get("dynamic", False)),
                 )
-                self._send_json(HTTPStatus.OK, response)
+                self._send_json(HTTPStatus.OK, self._record_history(response))
                 return
             if parsed.path == "/api/v1/scan/url":
                 payload = self._read_json_body()
@@ -47,15 +58,59 @@ class SkillSafeAppHandler(BaseHTTPRequestHandler):
                     lang=self._parse_lang(payload.get("lang", "auto")),
                     dynamic=self._parse_bool(payload.get("dynamic", False)),
                 )
-                self._send_json(HTTPStatus.OK, response)
+                self._send_json(HTTPStatus.OK, self._record_history(response))
                 return
             if parsed.path == "/api/v1/scan/upload":
                 response = self._handle_upload_scan()
-                self._send_json(HTTPStatus.OK, response)
+                self._send_json(HTTPStatus.OK, self._record_history(response))
                 return
             self._send_json(HTTPStatus.NOT_FOUND, {"error": {"message": f"Unknown endpoint: {parsed.path}"}})
         except Exception as exc:  # noqa: BLE001
             self._handle_api_error(exc)
+
+    def _handle_history_get(self, parsed) -> None:
+        prefix = "/api/v1/history/"
+        tail = parsed.path[len(prefix):].strip("/")
+        if not tail:
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": {"message": "History item not found"}})
+            return
+        parts = tail.split("/")
+        scan_id = parts[0]
+        payload = HISTORY.get_payload(scan_id)
+        if payload is None:
+            raise FileNotFoundError(f"History item not found: {scan_id}")
+        if len(parts) == 1:
+            self._send_json(HTTPStatus.OK, payload)
+            return
+        if len(parts) == 2 and parts[1] == "download":
+            query = parse_qs(parsed.query)
+            artifact = query.get("artifact", ["scan_report"])[0]
+            output_format = query.get("format", ["json"])[0]
+            filename, content_type, body = self._build_download(payload, artifact, output_format)
+            self._send_bytes(HTTPStatus.OK, body, content_type, filename)
+            return
+        self._send_json(HTTPStatus.NOT_FOUND, {"error": {"message": f"Unknown history endpoint: {parsed.path}"}})
+
+    def _build_download(self, payload: dict[str, object], artifact: str, output_format: str) -> tuple[str, str, bytes]:
+        scan_report = payload.get("scan_report", {})
+        explanation = payload.get("explanation", {})
+        explanation_text = str(payload.get("explanation_text", ""))
+        base_name = str(scan_report.get("target", "scan-report")).split("/")[-1] or "scan-report"
+        safe_name = base_name.replace(" ", "-")
+        if artifact == "scan_report" and output_format == "json":
+            return f"{safe_name}.report.json", "application/json; charset=utf-8", self._json_bytes(scan_report)
+        if artifact == "explanation" and output_format == "json":
+            return f"{safe_name}.explanation.json", "application/json; charset=utf-8", self._json_bytes(explanation)
+        if artifact == "explanation" and output_format == "text":
+            return f"{safe_name}.explanation.txt", "text/plain; charset=utf-8", explanation_text.encode("utf-8")
+        raise ValueError("Supported downloads: scan_report/json, explanation/json, explanation/text")
+
+    def _record_history(self, response: dict[str, object]) -> dict[str, object]:
+        response["history"] = {
+            "item": HISTORY.add(response),
+            "items": HISTORY.list_items(),
+        }
+        return response
 
     def _serve_static(self, request_path: str) -> None:
         relative = request_path.strip("/") or "index.html"
@@ -161,12 +216,24 @@ class SkillSafeAppHandler(BaseHTTPRequestHandler):
         )
 
     def _send_json(self, status: HTTPStatus, payload: dict[str, object]) -> None:
-        body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+        body = self._json_bytes(payload)
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _send_bytes(self, status: HTTPStatus, body: bytes, content_type: str, filename: str | None = None) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        if filename:
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _json_bytes(self, payload: object) -> bytes:
+        return json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
 
 
 def build_server(host: str = "127.0.0.1", port: int = 8000) -> ThreadingHTTPServer:

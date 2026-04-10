@@ -19,10 +19,14 @@ classifiers = [
 
 [project.scripts]
 skill-safe = "skill_safe.cli:main"
+skill-safe-web = "app.service.server:main"
 
 [tool.pytest.ini_options]
 addopts = "-q"
 testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
-include = ["skill_safe*"]
+include = ["skill_safe*", "app*"]
+
+[tool.setuptools.package-data]
+"app.ui" = ["*.html", "*.js", "*.css"]

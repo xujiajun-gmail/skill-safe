@@ -5,26 +5,13 @@ import json
 import sys
 from pathlib import Path
 
-from skill_safe.admission import build_provenance, build_summary, build_trust_profile, decide_findings
-from skill_safe.config import get_config_value, load_config, merge_taxonomy_overrides
 from skill_safe.diffing import build_diff_report
-from skill_safe.dynamic import run_dynamic_observation
+from skill_safe.engine import ScanOptions, build_scan_report
 from skill_safe.explain import load_report_payload, render_explanation
-from skill_safe.flow import apply_flow_decisions, run_flow_analysis
-from skill_safe.ingest import IngestError, ingest_target
-from skill_safe.i18n import detect_language
-from skill_safe.llm_config import resolve_llm_config
+from skill_safe.ingest import IngestError
 from skill_safe.models import ScanReport
-from skill_safe.policy import (
-    apply_environment_policy,
-    apply_policy_profile,
-    apply_taxonomy_overrides,
-    supported_policy_profiles,
-)
+from skill_safe.policy import supported_policy_profiles
 from skill_safe.reporting import render_diff_report, render_report
-from skill_safe.scanners import run_static_analysis
-from skill_safe.scoring import score_findings
-from skill_safe.semantic import run_semantic_review
 
 
 
@@ -83,7 +70,7 @@ def _add_common_analysis_args(parser: argparse.ArgumentParser, formats: tuple[st
 
 def _run_scan(args: argparse.Namespace) -> int:
     try:
-        report = _build_scan_report(args.target, args)
+        report = build_scan_report(args.target, _scan_options_from_args(args))
     except (FileNotFoundError, ValueError, IngestError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -98,8 +85,9 @@ def _run_scan(args: argparse.Namespace) -> int:
 
 def _run_diff(args: argparse.Namespace) -> int:
     try:
-        old_report = _build_scan_report(args.old_target, args)
-        new_report = _build_scan_report(args.new_target, args)
+        options = _scan_options_from_args(args)
+        old_report = build_scan_report(args.old_target, options)
+        new_report = build_scan_report(args.new_target, options)
     except (FileNotFoundError, ValueError, IngestError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -132,68 +120,21 @@ def _run_explain(args: argparse.Namespace) -> int:
     return 0
 
 
-def _build_scan_report(target: str, args: argparse.Namespace) -> ScanReport:
-    config = load_config(args.config, cwd=Path(target).resolve() if Path(target).exists() else Path.cwd())
-    source_type = args.source_type
-    if source_type == "auto":
-        source_type = get_config_value(config, "scan", "source_type", default="auto")
-    skill = ingest_target(target, source_type)
-
-    llm_config = resolve_llm_config(args, config)
-    gatekeeper_findings = run_static_analysis(skill)
-    findings = list(gatekeeper_findings)
-    findings.extend(run_semantic_review(skill, gatekeeper_findings=gatekeeper_findings))
-    flow_findings, flows = run_flow_analysis(skill, findings)
-    findings.extend(flow_findings)
-    policy_profile = args.policy_profile
-    if policy_profile == "default":
-        policy_profile = get_config_value(config, "policy", "profile", default="default")
-    findings = apply_policy_profile(findings, policy_profile)
-    findings = apply_environment_policy(findings, config)
-    findings = apply_taxonomy_overrides(findings, merge_taxonomy_overrides(config))
-    flows = apply_flow_decisions(flows, findings)
-    findings.sort(key=lambda item: item.confidence, reverse=True)
-    output_language = detect_language(skill.natural_language_blob(), _resolve_lang_mode(args, config))
-    scores = score_findings(findings)
-    artifacts = {
-        "manifest_present": skill.manifest is not None,
-        "file_count": len(skill.files),
-        "permission_hints": skill.permission_hints,
-        "entrypoints": skill.entrypoints,
-        "urls": skill.urls,
-        "policy": args.policy,
-        "policy_profile": policy_profile,
-        "config_path": args.config,
-        "offline": args.offline,
-        "llm_config": llm_config.public_dict(),
-        "publisher_identity": _publisher_identity(skill),
-        "repository_url": _repository_url(skill),
-        "release_ref": None,
-        "content_hash": _manifest_hash(skill),
-    }
-    runtime_trace = run_dynamic_observation(skill, enabled=getattr(args, "dynamic", False))
-    return ScanReport(
-        schema_version="1.0",
-        target=target,
-        source=skill.source,
-        output_language=output_language,
-        decision=decide_findings(findings),
-        summary=build_summary(findings),
-        scores=scores,
-        trust_profile=build_trust_profile(artifacts, findings, scores.supply_chain_trust),
-        provenance=build_provenance(artifacts, findings),
-        findings=findings,
-        flows=flows,
-        runtime_trace=runtime_trace,
-        artifacts=artifacts,
+def _scan_options_from_args(args: argparse.Namespace) -> ScanOptions:
+    return ScanOptions(
+        config_path=getattr(args, "config", None),
+        source_type=getattr(args, "source_type", "auto"),
+        policy=getattr(args, "policy", None),
+        policy_profile=getattr(args, "policy_profile", "default"),
+        offline=getattr(args, "offline", False),
+        dynamic=getattr(args, "dynamic", False),
+        lang=getattr(args, "lang", "auto"),
+        llm_mode=getattr(args, "llm_mode", None),
+        llm_provider=getattr(args, "llm_provider", None),
+        llm_base_url=getattr(args, "llm_base_url", None),
+        llm_model=getattr(args, "llm_model", None),
+        llm_api_key_env=getattr(args, "llm_api_key_env", None),
     )
-
-
-def _resolve_lang_mode(args: argparse.Namespace, config: dict[str, object]) -> str:
-    lang_mode = args.lang
-    if lang_mode == "auto":
-        lang_mode = get_config_value(config, "language", "mode", default="auto")
-    return lang_mode
 
 
 def _resolve_output_language(args: argparse.Namespace, old_report: ScanReport, new_report: ScanReport) -> str:
@@ -211,30 +152,6 @@ def _resolve_report_language(requested: str, payload: dict[str, object]) -> str:
     if report_language in {"zh", "en"}:
         return str(report_language)
     return "zh"
-
-
-
-def _publisher_identity(skill) -> str | None:
-    manifest = skill.manifest or {}
-    return manifest.get("publisher") or manifest.get("author")
-
-
-
-def _repository_url(skill) -> str | None:
-    manifest = skill.manifest or {}
-    for key in ("repository", "homepage", "url"):
-        value = manifest.get(key)
-        if isinstance(value, str):
-            return value
-    return None
-
-
-
-def _manifest_hash(skill) -> str | None:
-    for file in skill.files:
-        if file.path in {"skill.json", "manifest.json", ".codex-plugin/plugin.json", "package.json", "pyproject.toml"}:
-            return file.sha256
-    return None
 
 
 if __name__ == "__main__":  # pragma: no cover

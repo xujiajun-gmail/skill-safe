@@ -18,6 +18,7 @@
 - Scores results across malice likelihood, exploitability, blast radius, privilege excess, and supply-chain trust
 - Emits text, JSON, or SARIF reports for CI and manual review
 - Provides a safe `--dynamic` observation mode that **does not execute untrusted code on the host**
+- Includes a lightweight web app + REST API for uploading a skill directory/archive or scanning a remote URL
 
 ## Install
 
@@ -59,6 +60,35 @@ skill-safe diff ./old-skill ./new-skill --format json --output diff.json
 skill-safe explain ./report.json --lang zh
 ```
 
+## Web app
+
+Run the REST service and browser UI locally:
+
+```bash
+python3 -m app.service --host 127.0.0.1 --port 8000
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8000
+```
+
+Available REST endpoints:
+
+- `GET /api/v1/health`
+- `POST /api/v1/scan/path` with JSON `{ "path": "...", "lang": "auto|zh|en", "dynamic": false }`
+- `POST /api/v1/scan/url` with JSON `{ "url": "...", "lang": "auto|zh|en", "dynamic": false }`
+- `POST /api/v1/scan/upload` with `multipart/form-data`
+  - archive mode: fields `input_mode=archive`, `lang`, `dynamic`, file field `archive`
+  - directory mode: fields `input_mode=directory`, `lang`, `dynamic`, repeated file field `files` using relative filenames
+
+Notes:
+
+- The UI is decoupled from the scanner service and calls the REST API via `fetch`.
+- URL scans currently accept `http` / `https` only.
+- Downloaded remote content is capped at 50 MB by default.
+
 ## Example JSON fields
 
 - `summary.finding_count`
@@ -76,7 +106,7 @@ skill-safe explain ./report.json --lang zh
 
 ## Current limitations
 
-- v0.2 is intentionally offline and local-input only; it does not fetch remote git or registry packages.
+- The scanner still does not fetch remote git repositories or registry packages; web mode only supports direct `http` / `https` skill URLs.
 - Dynamic mode is a simulation/observation mode, not a hardened execution sandbox.
 - YAML config parsing is intentionally minimal in v0.2; common nested settings are supported, but this is not yet a full YAML implementation.
 - Semantic review is heuristic and evidence-backed; it is not an autonomous malware classifier.
@@ -89,4 +119,5 @@ python3 -m unittest discover -s tests
 python3 -m skill_safe.cli scan tests/fixtures/risky_skill --format text --dynamic
 python3 -m skill_safe.cli diff tests/fixtures/diff_case_v1 tests/fixtures/diff_case_v2 --lang en
 python3 -m skill_safe.cli explain /tmp/report.json --lang zh
+python3 -m app.service --host 127.0.0.1 --port 8000
 ```

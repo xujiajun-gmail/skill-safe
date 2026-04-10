@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import tarfile
 import tempfile
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 try:
@@ -108,15 +109,18 @@ def _prepare_target(path: Path, source_type: str) -> ExtractedTarget:
             raise IngestError(f"Archive target not found: {path}")
         temp_dir = tempfile.TemporaryDirectory(prefix="skill-safe-")
         root = Path(temp_dir.name)
-        if zipfile.is_zipfile(path):
-            with zipfile.ZipFile(path) as archive:
-                archive.extractall(root)
-        elif tarfile.is_tarfile(path):
-            with tarfile.open(path) as archive:
-                archive.extractall(root)
-        else:
+        try:
+            if zipfile.is_zipfile(path):
+                with zipfile.ZipFile(path) as archive:
+                    _extract_zip_safely(archive, root)
+            elif tarfile.is_tarfile(path):
+                with tarfile.open(path) as archive:
+                    _extract_tar_safely(archive, root)
+            else:
+                raise IngestError(f"Unsupported archive format: {path}")
+        except Exception:
             temp_dir.cleanup()
-            raise IngestError(f"Unsupported archive format: {path}")
+            raise
         members = [child for child in root.iterdir()]
         if len(members) == 1 and members[0].is_dir():
             return ExtractedTarget(members[0], temp_dir)
@@ -292,3 +296,38 @@ def _manifest_path(root: Path) -> str | None:
         if (root / candidate).exists():
             return candidate
     return None
+
+
+def _extract_zip_safely(archive: zipfile.ZipFile, root: Path) -> None:
+    for member in archive.infolist():
+        destination = root / _safe_archive_member_path(member.filename)
+        if member.is_dir():
+            destination.mkdir(parents=True, exist_ok=True)
+            continue
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with archive.open(member, "r") as source, destination.open("wb") as target:
+            shutil.copyfileobj(source, target)
+
+
+def _extract_tar_safely(archive: tarfile.TarFile, root: Path) -> None:
+    for member in archive.getmembers():
+        destination = root / _safe_archive_member_path(member.name)
+        if member.isdir():
+            destination.mkdir(parents=True, exist_ok=True)
+            continue
+        if not member.isreg():
+            raise IngestError(f"Unsupported archive member type: {member.name}")
+        extracted = archive.extractfile(member)
+        if extracted is None:
+            raise IngestError(f"Unable to read archive member: {member.name}")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with extracted, destination.open("wb") as target:
+            shutil.copyfileobj(extracted, target)
+
+
+def _safe_archive_member_path(name: str) -> Path:
+    normalized = name.replace("\\", "/")
+    relative = PurePosixPath(normalized)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise IngestError(f"Unsafe archive member path: {name}")
+    return Path(*relative.parts)

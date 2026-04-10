@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>skill-safe web app</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">skill-safe</p>
+          <h1 id="title">Skill Scanner Web App</h1>
+          <p id="subtitle" class="subtitle">
+            上传目录、压缩包或 URL，调用 skill_safe 的扫描能力并输出中英文可读报告。
+          </p>
+        </div>
+        <div class="hero-actions">
+          <span class="badge">REST API</span>
+          <span class="badge">ZH / EN</span>
+        </div>
+      </header>
+
+      <main class="layout">
+        <section class="panel">
+          <h2 id="scanFormTitle">开始扫描</h2>
+          <form id="scanForm">
+            <div class="field">
+              <label for="uiLanguage" id="uiLangLabel">界面语言</label>
+              <select id="uiLanguage" name="ui_language">
+                <option value="auto">Auto</option>
+                <option value="zh">中文</option>
+                <option value="en">English</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="reportLanguage" id="reportLangLabel">报告语言</label>
+              <select id="reportLanguage" name="lang">
+                <option value="auto">Auto</option>
+                <option value="zh">中文</option>
+                <option value="en">English</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="inputMode" id="inputModeLabel">输入方式</label>
+              <select id="inputMode" name="input_mode">
+                <option value="archive">压缩包</option>
+                <option value="directory">目录</option>
+                <option value="url">URL</option>
+                <option value="path">服务器本地路径</option>
+              </select>
+            </div>
+
+            <div class="field mode-panel" data-mode-panel="archive">
+              <label for="archiveFile" id="archiveLabel">上传压缩包</label>
+              <input id="archiveFile" name="archive" type="file" accept=".zip,.tar,.tar.gz,.tgz,.tar.bz2,.tar.xz" />
+            </div>
+
+            <div class="field mode-panel hidden" data-mode-panel="directory">
+              <label for="directoryFile" id="directoryLabel">上传目录</label>
+              <input id="directoryFile" name="files" type="file" webkitdirectory directory multiple />
+              <p class="hint" id="directoryHint">浏览器会保留目录内相对路径。</p>
+            </div>
+
+            <div class="field mode-panel hidden" data-mode-panel="url">
+              <label for="skillUrl" id="urlLabel">Skill URL</label>
+              <input id="skillUrl" name="url" type="url" placeholder="https://example.com/skill.zip" />
+            </div>
+
+            <div class="field mode-panel hidden" data-mode-panel="path">
+              <label for="skillPath" id="pathLabel">服务器本地路径</label>
+              <input id="skillPath" name="path" type="text" placeholder="/path/to/skill-or-archive" />
+            </div>
+
+            <label class="checkbox">
+              <input id="dynamicMode" name="dynamic" type="checkbox" />
+              <span id="dynamicLabel">启用动态观察模式</span>
+            </label>
+
+            <div class="actions">
+              <button id="submitButton" type="submit">开始扫描</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <h2 id="resultTitle">扫描结果</h2>
+            <span id="statusBadge" class="status-badge">Idle</span>
+          </div>
+          <div id="resultEmpty" class="empty-state">
+            <p id="emptyText">提交一个 Skill 之后，这里会显示可读报告、结构化结果和原始 JSON。</p>
+          </div>
+          <div id="resultContent" class="hidden">
+            <div class="summary-grid" id="summaryGrid"></div>
+
+            <section class="result-block">
+              <h3 id="headlineTitle">摘要</h3>
+              <p id="headlineText" class="headline"></p>
+              <ul id="narrativeList" class="bullet-list"></ul>
+            </section>
+
+            <section class="result-block">
+              <h3 id="findingTitle">关键发现</h3>
+              <div id="findingsList" class="stack"></div>
+            </section>
+
+            <section class="result-block">
+              <h3 id="flowTitle">关键攻击链</h3>
+              <div id="flowsList" class="stack"></div>
+            </section>
+
+            <section class="result-block">
+              <h3 id="actionTitle">建议动作</h3>
+              <ul id="actionsList" class="bullet-list"></ul>
+            </section>
+
+            <section class="result-block">
+              <h3 id="textTitle">文字版报告</h3>
+              <pre id="explanationText" class="terminal"></pre>
+            </section>
+
+            <section class="result-block">
+              <details>
+                <summary id="jsonTitle">原始 JSON</summary>
+                <pre id="rawJson" class="terminal"></pre>
+              </details>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script src="/app.js"></script>
+  </body>
+</html>

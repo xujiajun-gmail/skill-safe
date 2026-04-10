@@ -60,6 +60,9 @@ class ScanTests(unittest.TestCase):
         self.assertIn("flow.ch001.untrusted-string-to-shell", flow_ids)
         self.assertIn("flow.ch004.secret-to-egress", flow_ids)
         self.assertTrue(all(item["blocked_by_policy"] for item in payload["flows"]))
+        secret_flow = next(item for item in payload["flows"] if item["id"] == "flow.ch004.secret-to-egress")
+        self.assertNotIn("SC-004", secret_flow["triggered_taxonomy_ids"])
+        self.assertEqual(len(secret_flow["path"]), 2)
 
     def test_sarif_output_can_be_written(self) -> None:
         target = FIXTURES / "risky_skill"
@@ -279,7 +282,9 @@ class ScanTests(unittest.TestCase):
         payload = json.loads(buffer.getvalue())
         taxonomy_ids = {item["taxonomy_id"] for item in payload["findings"]}
         self.assertIn("CH-003", taxonomy_ids)
-        self.assertTrue(any(flow["id"] == "flow.ch003.untrusted-string-to-parameter" for flow in payload["flows"]))
+        flow = next(flow for flow in payload["flows"] if flow["id"] == "flow.ch003.untrusted-string-to-parameter")
+        self.assertTrue(flow["blocked_by_policy"])
+        self.assertIn("EX-003", flow["triggered_taxonomy_ids"])
 
     def test_config_can_relax_localhost_without_relaxing_metadata(self) -> None:
         target = FIXTURES / "network_skill"

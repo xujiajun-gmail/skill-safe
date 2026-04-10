@@ -181,6 +181,49 @@ class ScanTests(unittest.TestCase):
         self.assertIn("SC-002", taxonomy_ids)
         self.assertEqual(payload["trust_profile"]["version_stability"], "floating")
 
+    def test_destructive_fixture_hits_ex004(self) -> None:
+        skill = ingest_target(str(FIXTURES / "destructive_skill"))
+        findings = run_static_analysis(skill)
+        destructive = [finding for finding in findings if finding.taxonomy_id == "EX-004"]
+        self.assertTrue(destructive)
+        self.assertTrue(any(finding.decision_hint.value == "block" for finding in destructive))
+
+    def test_credential_leak_fixture_hits_da002(self) -> None:
+        skill = ingest_target(str(FIXTURES / "credential_leak_skill"))
+        findings = run_static_analysis(skill)
+        credential = [finding for finding in findings if finding.taxonomy_id == "DA-002"]
+        self.assertTrue(credential)
+        self.assertTrue(all(finding.decision_hint.value == "review" for finding in credential))
+
+    def test_workspace_poison_fixture_hits_mp002(self) -> None:
+        target = FIXTURES / "workspace_poison_skill"
+        from io import StringIO
+        import contextlib
+
+        buffer = StringIO()
+        with contextlib.redirect_stdout(buffer):
+            exit_code = main(["scan", str(target), "--format", "json", "--lang", "en"])
+        self.assertEqual(exit_code, 0)
+        payload = json.loads(buffer.getvalue())
+        workspace = [item for item in payload["findings"] if item["taxonomy_id"] == "MP-002"]
+        self.assertTrue(workspace)
+        self.assertTrue(all(item["decision_hint"] == "review" for item in workspace))
+
+    def test_trust_mismatch_fixture_hits_sc004_identity_mismatch(self) -> None:
+        skill = ingest_target(str(FIXTURES / "trust_mismatch_skill"))
+        findings = run_static_analysis(skill)
+        trust_findings = [finding for finding in findings if finding.id == "gatekeeper.sc004.identity-mismatch"]
+        self.assertTrue(trust_findings)
+        tags = {tag for finding in trust_findings for tag in finding.tags}
+        self.assertIn("repo-mismatch", tags)
+        self.assertIn("docs-mismatch", tags)
+
+    def test_repository_slug_with_master_substring_is_not_floating_reference(self) -> None:
+        skill = ingest_target(str(FIXTURES / "destructive_skill"))
+        findings = run_static_analysis(skill)
+        floating = [finding for finding in findings if finding.id == "gatekeeper.sc004.unpinned-reference"]
+        self.assertFalse(floating)
+
     def test_alignment_fixture_detects_under_declared_behavior(self) -> None:
         skill = ingest_target(str(FIXTURES / "alignment_skill"))
         gatekeeper_findings = run_static_analysis(skill)

@@ -36,6 +36,12 @@ SUSPICIOUS_COMMAND_RULES: tuple[PatternRule, ...] = (
     PatternRule("SC-002", r"base64\s+(-d|--decode)|eval\(|exec\(|fromCharCode", Severity.high, "obfuscation", Decision.review, "supply_chain", 0.85, ("obfuscation",)),
 )
 
+DESTRUCTIVE_RULES: tuple[PatternRule, ...] = (
+    PatternRule("EX-004", r"\brm\s+-rf\s+(?:\$HOME|~|/|/etc|/usr|/var|/opt|/Library|[A-Za-z]:\\)", Severity.critical, "destructive-delete", Decision.block, "execution", 0.90, ("destructive", "delete")),
+    PatternRule("EX-004", r"\bdd\s+if=/dev/zero|\bmkfs\b|\bformat\s+[A-Za-z]:", Severity.high, "disk-wipe", Decision.block, "execution", 0.90, ("destructive", "wipe")),
+    PatternRule("EX-004", r"\brm\s+-rf\b|\bshutil\.rmtree\(|\bRemove-Item\b[^\n]*-Recurse[^\n]*-Force", Severity.high, "recursive-delete", Decision.review, "execution", 0.80, ("destructive", "filesystem")),
+)
+
 PROMPT_INJECTION_RULES: tuple[PatternRule, ...] = (
     PatternRule("PI-001", r"ignore (all|any|previous|prior) (instructions|prompts)|override (system|safety)", Severity.high, "prompt", Decision.review, "prompt_safety", 0.85, ("prompt", "policy-bypass")),
     PatternRule("PI-001", r"do not tell the user|without asking the user|without confirmation|auto-approve", Severity.high, "prompt", Decision.review, "prompt_safety", 0.85, ("prompt", "concealment")),
@@ -56,10 +62,21 @@ SECRETS_RULES: tuple[PatternRule, ...] = (
     PatternRule("DA-003", r"MEMORY\.md|SOUL\.md|AGENTS\.md", Severity.high, "data", Decision.block, "memory", 0.85, ("memory", "persona")),
 )
 
+CREDENTIAL_LEAK_RULES: tuple[PatternRule, ...] = (
+    PatternRule("DA-002", r"\bprint\([^\n]*(OPENAI_API_KEY|ANTHROPIC_API_KEY|AWS_SECRET_ACCESS_KEY|api[_-]?key|token|Authorization|Bearer)", Severity.medium, "credential-print", Decision.review, "credential_handling", 0.80, ("credential", "logging")),
+    PatternRule("DA-002", r"\blogger\.(debug|info|warning|error|exception)\([^\n]*(api[_-]?key|token|Authorization|Bearer)", Severity.medium, "credential-log", Decision.review, "credential_handling", 0.80, ("credential", "logging")),
+    PatternRule("DA-002", r"\becho\s+\$?(OPENAI_API_KEY|ANTHROPIC_API_KEY|AWS_SECRET_ACCESS_KEY)\b", Severity.medium, "credential-echo", Decision.review, "credential_handling", 0.80, ("credential", "shell-output")),
+)
+
 PERSISTENCE_RULES: tuple[PatternRule, ...] = (
     PatternRule("MP-001", r"persist these instructions|store for future sessions|cache instructions", Severity.high, "memory-poisoning", Decision.block, "persistence", 0.85, ("memory", "persist")),
     PatternRule("MP-001", r"(write|append|save|update|modify)[^\n]{0,48}(MEMORY\.md|SOUL\.md|AGENTS\.md)|(MEMORY\.md|SOUL\.md|AGENTS\.md)[^\n]{0,48}(write|append|save|update|modify)", Severity.high, "memory-file-write", Decision.block, "persistence", 0.85, ("memory", "write")),
     PatternRule("SC-003", r"\.bashrc|\.zshrc|\.profile|LaunchAgents|crontab|systemd", Severity.high, "persistence", Decision.block, "persistence", 0.80, ("persistence", "startup")),
+)
+
+WORKSPACE_POISON_RULES: tuple[PatternRule, ...] = (
+    PatternRule("MP-002", r"(\.env|\.claude/|\.cursor/|\.vscode/|\.git/hooks/|mcp\.json)[^\n]{0,48}(write|append|save|update|modify|overwrite)|(write|append|save|update|modify|overwrite)[^\n]{0,48}(\.env|\.claude/|\.cursor/|\.vscode/|\.git/hooks/|mcp\.json)", Severity.high, "workspace-config-write", Decision.review, "workspace", 0.82, ("workspace", "config-write")),
+    PatternRule("MP-002", r"(echo|cat|tee)[^\n]{0,48}(>|>>)\s*(\.env|\.claude/|\.cursor/|\.vscode/|\.git/hooks/|mcp\.json)", Severity.high, "workspace-shell-write", Decision.review, "workspace", 0.82, ("workspace", "shell-write")),
 )
 
 EXFIL_RULES: tuple[PatternRule, ...] = (

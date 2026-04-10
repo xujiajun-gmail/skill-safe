@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import difflib
 import re
+from pathlib import PurePosixPath
 from typing import Iterable
+from urllib.parse import parse_qs, urlparse
 
 from skill_safe.models import Decision, Evidence, Finding, Severity, SkillIR, Stage
 from skill_safe.scanners.rules import (
+    CREDENTIAL_LEAK_RULES,
+    DESTRUCTIVE_RULES,
     DOC_EXEC_RULE,
     EXFIL_RULES,
     HOOK_FILENAMES,
@@ -15,8 +20,8 @@ from skill_safe.scanners.rules import (
     SUSPICIOUS_COMMAND_RULES,
     UNICODE_HIDDEN_RULE,
     URL_RULES,
+    WORKSPACE_POISON_RULES,
     PatternRule,
-    UrlRule,
 )
 
 
@@ -41,11 +46,17 @@ def _scan_text_patterns(skill: SkillIR) -> list[Finding]:
         findings.extend(_run_pattern_rule(file.path, file.text, UNICODE_HIDDEN_RULE))
         for rule in SUSPICIOUS_COMMAND_RULES:
             findings.extend(_run_pattern_rule(file.path, file.text, rule))
+        for rule in DESTRUCTIVE_RULES:
+            findings.extend(_run_pattern_rule(file.path, file.text, rule))
         for rule in PROMPT_INJECTION_RULES:
             findings.extend(_run_pattern_rule(file.path, file.text, rule))
         for rule in SECRETS_RULES:
             findings.extend(_run_pattern_rule(file.path, file.text, rule))
+        for rule in CREDENTIAL_LEAK_RULES:
+            findings.extend(_run_pattern_rule(file.path, file.text, rule))
         for rule in PERSISTENCE_RULES:
+            findings.extend(_run_pattern_rule(file.path, file.text, rule))
+        for rule in WORKSPACE_POISON_RULES:
             findings.extend(_run_pattern_rule(file.path, file.text, rule))
         for rule in EXFIL_RULES:
             findings.extend(_run_pattern_rule(file.path, file.text, rule))
@@ -115,7 +126,7 @@ def _scan_manifest(skill: SkillIR) -> list[Finding]:
             )
         reference_values = _manifest_reference_values(manifest)
         matched_reference = next(
-            (value for value in reference_values if re.search(r"\b(latest|main|master)\b", value, re.IGNORECASE)),
+            (value for value in reference_values if _contains_unpinned_reference(value)),
             None,
         )
         if matched_reference is not None:
@@ -138,6 +149,7 @@ def _scan_manifest(skill: SkillIR) -> list[Finding]:
                     tags=["supply-chain", "pinning"],
                 )
             )
+        findings.extend(_scan_identity_consistency(skill, manifest))
     return findings
 
 
@@ -282,3 +294,117 @@ def _manifest_reference_values(manifest: dict[str, object]) -> list[str]:
             if key_lower in interesting_keys:
                 values.append(str(value))
     return values
+
+
+def _scan_identity_consistency(skill: SkillIR, manifest: dict[str, object]) -> list[Finding]:
+    findings: list[Finding] = []
+    manifest_name = _normalized_label(str(manifest.get("name") or manifest.get("display_name") or ""))
+    if not manifest_name:
+        return findings
+
+    repository_url = next(
+        (
+            str(manifest[key])
+            for key in ("repository", "homepage", "url")
+            if isinstance(manifest.get(key), str) and str(manifest.get(key)).startswith(("http://", "https://"))
+        ),
+        None,
+    )
+    docs_title = _primary_doc_title(skill)
+
+    evidence: list[Evidence] = []
+    tags = ["identity", "consistency"]
+    mismatch = False
+
+    if repository_url:
+        repo_slug = _repository_slug(repository_url)
+        repo_normalized = _normalized_label(repo_slug)
+        if repo_normalized and not _labels_compatible(manifest_name, repo_normalized):
+            mismatch = True
+            evidence.append(
+                Evidence(
+                    file="<manifest>",
+                    detail="Manifest name does not align with repository slug.",
+                    excerpt=f"{manifest.get('name')} vs {repo_slug}",
+                )
+            )
+            tags.append("repo-mismatch")
+
+    if docs_title:
+        docs_normalized = _normalized_label(docs_title)
+        if docs_normalized and not _labels_compatible(manifest_name, docs_normalized):
+            mismatch = True
+            evidence.append(
+                Evidence(
+                    file="SKILL.md",
+                    detail="Manifest name does not align with the primary documentation title.",
+                    excerpt=f"{manifest.get('name')} vs {docs_title}",
+                )
+            )
+            tags.append("docs-mismatch")
+
+    if not mismatch:
+        return findings
+
+    findings.append(
+        Finding(
+            id="gatekeeper.sc004.identity-mismatch",
+            taxonomy_id="SC-004",
+            stage=Stage.gatekeeper,
+            severity=Severity.medium,
+            category="supply_chain",
+            confidence=0.76,
+            decision_hint=Decision.review,
+            evidence=evidence[:3],
+            tags=tags,
+        )
+    )
+    return findings
+
+
+def _primary_doc_title(skill: SkillIR) -> str | None:
+    for file in skill.files:
+        if not file.text or file.is_binary or not file.path.lower().endswith(".md"):
+            continue
+        for line in file.text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                return stripped.lstrip("#").strip()
+    return None
+
+
+def _repository_slug(url: str) -> str:
+    parsed = urlparse(url)
+    path = parsed.path.strip("/")
+    if not path:
+        return parsed.netloc
+    return PurePosixPath(path).name
+
+
+def _normalized_label(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", value.lower())
+
+
+def _labels_compatible(left: str, right: str) -> bool:
+    if not left or not right:
+        return True
+    if left == right or left in right or right in left:
+        return True
+    return difflib.SequenceMatcher(a=left, b=right).ratio() >= 0.72
+
+
+def _contains_unpinned_reference(value: str) -> bool:
+    lowered = value.strip().lower()
+    if lowered in {"latest", "main", "master"}:
+        return True
+    if lowered.startswith(("http://", "https://")):
+        parsed = urlparse(lowered)
+        segments = [segment for segment in parsed.path.split("/") if segment]
+        if any(segment in {"latest", "main", "master"} for segment in segments):
+            return True
+        for items in parse_qs(parsed.query).values():
+            if any(item in {"latest", "main", "master"} for item in items):
+                return True
+        return False
+    tokens = re.split(r"[^a-z0-9]+", lowered)
+    return any(token in {"latest", "main", "master"} for token in tokens if token)

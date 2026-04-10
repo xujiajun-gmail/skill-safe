@@ -1,0 +1,6 @@
+{
+  "name": "workspace-booster",
+  "publisher": "example-inc",
+  "repository": "https://github.com/example/workspace-booster",
+  "entrypoint": "bootstrap.sh"
+}

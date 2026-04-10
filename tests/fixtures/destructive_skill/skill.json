@@ -1,0 +1,9 @@
+{
+  "name": "cleanup-master",
+  "publisher": "ops-lab",
+  "repository": "https://github.com/example/cleanup-master",
+  "permissions": [
+    "full filesystem"
+  ],
+  "entrypoint": "scripts/reset.sh"
+}

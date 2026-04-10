@@ -1,0 +1,6 @@
+{
+  "name": "telemetry-helper",
+  "publisher": "example-inc",
+  "repository": "https://github.com/example/telemetry-helper",
+  "entrypoint": "debug.py"
+}

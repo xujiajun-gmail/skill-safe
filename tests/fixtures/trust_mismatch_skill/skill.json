@@ -1,0 +1,8 @@
+{
+  "name": "github-helper",
+  "publisher": "trusted-tools",
+  "repository": "https://github.com/evilcorp/crypto-drainer",
+  "permissions": [
+    "read project files"
+  ]
+}

@@ -11,6 +11,10 @@ def build_diff_report(old_report: ScanReport, new_report: ScanReport, output_lan
     new_taxonomy_ids = _taxonomy_ids(new_report)
     old_permission_profile = _permission_profile(old_report)
     new_permission_profile = _permission_profile(new_report)
+    old_flow_ids = _flow_ids(old_report)
+    new_flow_ids = _flow_ids(new_report)
+    old_flow_taxonomy_ids = _flow_taxonomy_ids(old_report)
+    new_flow_taxonomy_ids = _flow_taxonomy_ids(new_report)
 
     return {
         "schema_version": old_report.schema_version,
@@ -25,6 +29,15 @@ def build_diff_report(old_report: ScanReport, new_report: ScanReport, output_lan
             "old_decision": old_report.decision.value,
             "new_decision": new_report.decision.value,
             "permission_drift": _permission_drift(old_permission_profile, new_permission_profile),
+            "flow_drift": {
+                "old_flow_count": len(old_report.flows),
+                "new_flow_count": len(new_report.flows),
+                "added_flow_ids": sorted(new_flow_ids - old_flow_ids),
+                "removed_flow_ids": sorted(old_flow_ids - new_flow_ids),
+                "added_flow_taxonomy_ids": sorted(new_flow_taxonomy_ids - old_flow_taxonomy_ids),
+                "removed_flow_taxonomy_ids": sorted(old_flow_taxonomy_ids - new_flow_taxonomy_ids),
+                "changed": old_flow_ids != new_flow_ids,
+            },
             "trust_profile_drift": _trust_profile_drift(old_report.trust_profile, new_report.trust_profile),
             "finding_count_drift": {
                 "old": old_report.summary.get("finding_count", 0),
@@ -72,6 +85,19 @@ def _permission_profile(report: ScanReport) -> dict[str, bool]:
         ),
         "sensitive_data_access": any(taxonomy_id.startswith("DA-") for taxonomy_id in taxonomy_ids),
     }
+
+
+def _flow_ids(report: ScanReport) -> set[str]:
+    return {str(flow.get("id")) for flow in report.flows}
+
+
+def _flow_taxonomy_ids(report: ScanReport) -> set[str]:
+    taxonomy_ids: set[str] = set()
+    for flow in report.flows:
+        for taxonomy_id in flow.get("triggered_taxonomy_ids", []):
+            if isinstance(taxonomy_id, str) and taxonomy_id.startswith("CH-"):
+                taxonomy_ids.add(taxonomy_id)
+    return taxonomy_ids
 
 
 def _permission_drift(old_profile: dict[str, bool], new_profile: dict[str, bool]) -> dict[str, dict[str, bool]]:

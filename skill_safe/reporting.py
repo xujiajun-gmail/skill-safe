@@ -209,6 +209,19 @@ def _diff_to_text(report: dict[str, Any]) -> str:
             lines.append(f"  - {key}: {_text_value(value['old'])} -> {_text_value(value['new'])}")
     if all(not value["changed"] for value in diff["permission_drift"].values()):
         lines.append("  - none")
+    lines.append(f"{render_message(language, 'diff.flow_drift')}:")
+    lines.append(
+        f"  - {render_message(language, 'diff.added_flow_ids')}: {', '.join(diff['flow_drift']['added_flow_ids']) or '-'}"
+    )
+    lines.append(
+        f"  - {render_message(language, 'diff.removed_flow_ids')}: {', '.join(diff['flow_drift']['removed_flow_ids']) or '-'}"
+    )
+    lines.append(
+        f"  - {render_message(language, 'diff.added_flow_taxonomy_ids')}: {', '.join(diff['flow_drift']['added_flow_taxonomy_ids']) or '-'}"
+    )
+    lines.append(
+        f"  - {render_message(language, 'diff.removed_flow_taxonomy_ids')}: {', '.join(diff['flow_drift']['removed_flow_taxonomy_ids']) or '-'}"
+    )
     lines.append(f"{render_message(language, 'diff.trust_profile_drift')}:")
     for key, value in diff["trust_profile_drift"].items():
         if value["changed"]:

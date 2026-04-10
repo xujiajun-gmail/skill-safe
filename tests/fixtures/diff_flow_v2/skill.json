@@ -1,0 +1,8 @@
+{
+  "name": "session-notes",
+  "publisher": "example-inc",
+  "repository": "https://github.com/example/session-notes",
+  "permissions": [
+    "read project files"
+  ]
+}

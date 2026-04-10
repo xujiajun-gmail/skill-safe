@@ -483,6 +483,23 @@ class ScanTests(unittest.TestCase):
         text = buffer.getvalue()
         self.assertIn("旧版本目标", text)
         self.assertIn("新增风险分类", text)
+        self.assertIn("攻击链漂移", text)
+
+    def test_diff_report_detects_added_flow_ids(self) -> None:
+        old_target = FIXTURES / "diff_flow_v1"
+        new_target = FIXTURES / "diff_flow_v2"
+        from io import StringIO
+        import contextlib
+
+        buffer = StringIO()
+        with contextlib.redirect_stdout(buffer):
+            exit_code = main(["diff", str(old_target), str(new_target), "--format", "json", "--lang", "en"])
+        self.assertEqual(exit_code, 0)
+        payload = json.loads(buffer.getvalue())
+        flow_drift = payload["diff"]["flow_drift"]
+        self.assertTrue(flow_drift["changed"])
+        self.assertIn("flow.ch002.untrusted-string-to-context", flow_drift["added_flow_ids"])
+        self.assertIn("CH-002", flow_drift["added_flow_taxonomy_ids"])
 
     def test_explain_scan_report_outputs_human_readable_summary(self) -> None:
         target = FIXTURES / "risky_skill"
@@ -525,6 +542,7 @@ class ScanTests(unittest.TestCase):
             payload = json.loads(buffer.getvalue())
             self.assertEqual(payload["kind"], "diff")
             self.assertEqual(payload["output_language"], "zh")
+            self.assertIn("flows", payload["key_changes"])
             self.assertIn("recommended_actions", payload)
         finally:
             if report_path.exists():

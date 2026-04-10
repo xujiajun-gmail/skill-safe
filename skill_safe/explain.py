@@ -100,6 +100,7 @@ def _build_diff_explanation(payload: dict[str, Any], language: str) -> dict[str,
     diff = payload.get("diff", {})
     changed_permissions = [key for key, value in diff.get("permission_drift", {}).items() if value.get("changed")]
     changed_trust = [key for key, value in diff.get("trust_profile_drift", {}).items() if value.get("changed")]
+    flow_drift = diff.get("flow_drift", {})
     return {
         "kind": "diff",
         "output_language": language,
@@ -127,9 +128,16 @@ def _build_diff_explanation(payload: dict[str, Any], language: str) -> dict[str,
                 added=", ".join(diff.get("added_taxonomy_ids", [])) or "-",
                 removed=", ".join(diff.get("removed_taxonomy_ids", [])) or "-",
             ),
+            render_message(
+                language,
+                "explain.diff.narrative.flows",
+                added=", ".join(flow_drift.get("added_flow_ids", [])) or "-",
+                removed=", ".join(flow_drift.get("removed_flow_ids", [])) or "-",
+            ),
         ],
         "key_changes": {
             "permissions": changed_permissions,
+            "flows": flow_drift.get("added_flow_taxonomy_ids", []),
             "trust_profile": changed_trust,
         },
         "recommended_actions": _diff_actions(payload, language),
@@ -158,6 +166,8 @@ def _diff_actions(payload: dict[str, Any], language: str) -> list[str]:
         actions.append(render_message(language, "explain.action.reaudit"))
     if diff.get("added_taxonomy_ids"):
         actions.append(render_message(language, "explain.action.recheck_permissions"))
+    if diff.get("flow_drift", {}).get("changed"):
+        actions.append(render_message(language, "explain.action.recheck_flows"))
     if any(value.get("changed") for value in diff.get("permission_drift", {}).values()):
         actions.append(render_message(language, "explain.action.compare_permissions"))
     if not actions:
